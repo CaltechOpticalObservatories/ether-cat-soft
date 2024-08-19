@@ -60,6 +60,10 @@ class master:
         self.HAL.configureSlaves()
         if not self.assertNetworkWideState(networkManagementStates.SAFE_OP):
             raise RuntimeError("Failed to transition to Safe-OP state after configuring slaves.")
+        
+        for slave in self.slaves:
+            slave.initializePDOVars()
+            slave.createPDOMessage([0] * len(slave.currentRxPDOMap))
 
     ### State Methods  SDO ###
     def assertNetworkWideState(self, state: int) -> bool:
@@ -99,15 +103,15 @@ class master:
             slave.setDeviceState(state)
 
     ### PDO Methods ###
+    """The PDO methods assume that all slaves are in the same state and that the PDOS all have the same base configuration, or at least that differences
+    are handled at other abstraction levels"""
     def enablePDO(self):
         self.HAL.setNetworkWideState(networkManagementStates.OPERATIONAL)
 
         # Send PDO data to maintain the operational state
         for i in range(4): # Iterate 4 times to clear the three buffer sync managers
             self.sendPDO()
-            time.sleep(self.PDOCycleTime)
             self.receivePDO()
-            time.sleep(self.PDOCycleTime)
 
         return self.assertNetworkWideState(networkManagementStates.OPERATIONAL)
     
@@ -124,11 +128,7 @@ class master:
         for slave in self.slaves:
             slave.fetchPDOData() # Put the low level HAL slave byte buffer into slave.PDOInput 
 
-            # Get the pack format for the input pdo data
-            packFormat = ''
-            for address in slave.currentTxPDOMap:
-                packFormat += address[2]
-            slave.PDOInput = struct.unpack('<' + packFormat, slave.PDOInput)
+            slave.PDOInput = struct.unpack('<' + slave.currentTxPDOPackFormat, slave.PDOInput)
         
         # Enforce the minimum PDO cycle time after performing all the above operations
         if time.perf_counter_ns() - start > self.PDOCycleTime * 1e9:
@@ -144,12 +144,180 @@ class master:
         self.openNetworkInterface()
         self.initializeSlaves()
         self.configureSlaves()
+ 
+    def waitForStatePDO(self, desiredState: StatuswordStates):
+        """Wait until all slaves are in the desired state. This function will block until the desired state is reached."""
+
+        print("Waiting for state")
+
+        self.sendPDO()
+        self.receivePDO()
+        self.sendPDO()
+        self.receivePDO()
+        self.sendPDO()
+        self.receivePDO()
+
+        waiting = True
+        while waiting:
+            self.sendPDO()
+            self.receivePDO()
+
+            oneSlaveNotInState = False
+            for slave in self.slaves:
+                if not assertStatuswordState(slave.PDOInput[slave._statuswordPDOIndex], desiredState):
+                    oneSlaveNotInState = True
+                    print(slave.PDOInput[slave._statuswordPDOIndex])
+                    print("One slave not in state")
+                    print(slave._statuswordPDOIndex)
+                    break
+            
+            if not oneSlaveNotInState:
+                print("All slaves in state")
+                waiting = False
+                break
+
+    def changeDeviceStatesPDO(self, desiredState: StatuswordStates):
+        """Change the device state of all slaves to the desired state. Will only work if all slaves are in the same start state."""
+
+        self.receivePDO()
+        firstSlave = self.slaves[0]
+        statusword = firstSlave.PDOInput[firstSlave._statuswordPDOIndex]
+        startingState = getStatuswordState(statusword)
+
+        endState = getStatuswordState(desiredState)
+
+        stateTransitionControlwords = getStateTransitions(startingState, endState)
+        print(stateTransitionControlwords)
+
+        for controlword in stateTransitionControlwords:
+            for slave in self.slaves:
+                slave.RxData[slave._controlwordPDOIndex] = controlword
+                print(slave.RxData)
+                slave.createPDOMessage(slave.RxData)
+                self.sendPDO()
+                self.receivePDO()
+
+        self.waitForStatePDO(desiredState)
+
+    def changeOperatingMode(self, operatingMode: int | operatingModes):
+        """Change the RxPDO output to switch the operating mode of the slave on the next master.SendPDO() call."""
 
         for slave in self.slaves:
-            slave.initializePDOVars()
+            slave.changeOperatingMode(operatingMode)
 
-    
-    def __del__(self):
+        self.sendPDO()
+        self.receivePDO()
+
+    def performHoming(self):
+        """Start the homing process of all slaves."""
+
+        self.changeOperatingMode(operatingModes.HOMING_MODE)
+
+        for slave in self.slaves:
+            data = slave.RxData
+            data[slave._controlwordPDOIndex] = 0b11111 # Control word to start homing #TODO: Consider implementing controlword class
+            slave.createPDOMessage(data)
+        
+        self.sendPDO()
+        self.receivePDO()
+
+        for slave in self.slaves:
+            data = slave.RxData
+            data[slave._controlwordPDOIndex] = 0b01111 #TODO: Consider implementing controlword class
+            slave.createPDOMessage(data)
+
+        # Send and receive PDOs 3 times so that the three buffer system is cleared of previous values to avoid false 'Target reached' signals
+        self.sendPDO()
+        self.receivePDO()
+
+        self.sendPDO()
+        self.receivePDO()
+
+        self.sendPDO()
+        self.receivePDO()
+
+        homing = True
+        while homing:
+            self.sendPDO()
+            self.receivePDO()
+
+            oneSlaveStillHoming = False
+
+            for slave in self.slaves:
+                statusword = slave.PDOInput[slave._statuswordPDOIndex]
+                if statusword & (1 << 10) != 1 << 10:
+                    oneSlaveStillHoming = True
+                    break
+            
+            if not oneSlaveStillHoming:
+                homing = False
+                break
+
+    def goToPositions(self, positions: list[int], profileAcceleration=10000, profileDeceleration=10000, profileVelocity=1000, blocking=True):
+        """Send slaves to the given positions."""
+        self.changeOperatingMode(operatingModes.PROFILE_POSITION_MODE)
+
+        for slave, position in zip(self.slaves, positions):
+            data = slave.RxData
+            data[slave._controlwordPDOIndex] = 0b01111
+            data[1] = position
+            data[2] = profileAcceleration
+            data[3] = profileDeceleration
+            data[4] = profileVelocity
+            slave.createPDOMessage(data)
+
+        self.sendPDO()
+        self.receivePDO()
+
+        for slave in self.slaves:
+            data = slave.RxData
+            data[slave._controlwordPDOIndex] = 0b11111
+            slave.createPDOMessage(data)
+        
+        self.sendPDO()
+        self.receivePDO()
+
+        if blocking:
+            moving = True
+
+            # Send recieve to clear the buffer of old target reached statuswords
+            self.sendPDO()
+            self.receivePDO()
+
+            self.sendPDO()
+            self.receivePDO()
+
+            while moving:
+                self.sendPDO()
+                self.receivePDO()
+
+                oneSlaveMoving = False
+                for slave in self.slaves:
+                    statusword = slave.PDOInput[slave._statuswordPDOIndex]
+                    if statusword & (1 << 10) != 1 << 10:
+                        oneSlaveMoving = True
+                        break
+                
+                if not oneSlaveMoving:
+                    moving = False
+                    break
+
+    def __del__(self, checkErrorRegisters=True):
+
+        if checkErrorRegisters:
+            for slave in self.slaves:
+                print("Slave one diagnostics:")
+                resp = slave.SDORead(slave.objectDictionary.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_1)
+                print("Diagnosis message 1: ", resp)
+                resp = slave.SDORead(slave.objectDictionary.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_2)
+                print("Diagnosis message 2: ", resp)
+                resp = slave.SDORead(slave.objectDictionary.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_3)
+                print("Diagnosis message 3: ", resp)
+                resp = slave.SDORead(slave.objectDictionary.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_4)
+                print("Diagnosis message 4: ", resp)
+                resp = slave.SDORead(slave.objectDictionary.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_5)
+                print("Diagnosis message 5: ", resp)
+
         self.closeNetworkInterface()
 
 class slave:
@@ -290,9 +458,6 @@ class slave:
             self.currentRxPDOPackFormat += rxAddress[2]
         for txAddress in self.currentTxPDOMap:
             self.currentTxPDOPackFormat += txAddress[2]
-
-        print(self.currentRxPDOPackFormat)
-        print(self.currentTxPDOPackFormat)
 
     def changeOperatingMode(self, operatingMode: int | operatingModes):
         """Change the RxPDO output to switch the operating mode of the slave on the next master.SendPDO() call."""
