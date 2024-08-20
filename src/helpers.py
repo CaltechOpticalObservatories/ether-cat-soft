@@ -226,6 +226,8 @@ def getStateTransitions(startState: str, endState: str) -> list[int]:
             A list of controlwords that each correspond to a state transition
     """
 
+    print(startState, endState)
+
     ### Catch simple transition cases ###
     if startState == endState:
         return [0]

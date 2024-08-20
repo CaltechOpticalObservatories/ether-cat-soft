@@ -11,7 +11,7 @@ from HAL.pysoem.pysoemMaster import pysoemHAL
 class master:
 
     def __init__(self, networkInterfaceName: str, slaveConfigFuncs: list[Callable] = None, 
-                 HAL=pysoemHAL, connectOnInit=True) -> None:
+                 HAL=pysoemHAL) -> None:
 
         self.HAL = HAL(networkInterfaceName)
         self.numSlaves = 0
@@ -106,6 +106,7 @@ class master:
     """The PDO methods assume that all slaves are in the same state and that the PDOS all have the same base configuration, or at least that differences
     are handled at other abstraction levels"""
     def enablePDO(self):
+        print("Enabling PDO")
         self.HAL.setNetworkWideState(networkManagementStates.OPERATIONAL)
 
         # Send PDO data to maintain the operational state
@@ -113,10 +114,11 @@ class master:
             self.sendPDO()
             self.receivePDO()
 
+        print("PDO Enabled")
         return self.assertNetworkWideState(networkManagementStates.OPERATIONAL)
     
     def disablePDO(self):
-        self.setNetworkWideState(networkManagementStates.PRE_OP)
+        self.setNetworkWideState(networkManagementStates.SAFE_OP)
     
     def sendPDO(self):
         self.HAL.sendProcessData()
@@ -176,14 +178,39 @@ class master:
                 waiting = False
                 break
 
+    def assertStatuswordStatePDO(self, state: StatuswordStates):
+
+        # Clear buffer
+        for i in range(4):
+            self.sendPDO()
+            self.receivePDO()
+
+        # Check the states of all slaves
+        for slave in self.slaves:
+            statusword = slave.PDOInput[slave._statuswordPDOIndex]
+            if not assertStatuswordState(statusword, state):
+                return False
+        return True
+
     def changeDeviceStatesPDO(self, desiredState: StatuswordStates):
         """Change the device state of all slaves to the desired state. Will only work if all slaves are in the same start state."""
 
         self.receivePDO()
         firstSlave = self.slaves[0]
         statusword = firstSlave.PDOInput[firstSlave._statuswordPDOIndex]
-        startingState = getStatuswordState(statusword)
 
+        if assertStatuswordState(statusword, StatuswordStates.NOT_READY_TO_SWITCH_ON):
+            print("Slave needs time to auto switch states")
+            while True:
+                self.sendPDO()
+                self.receivePDO()
+
+                statusword = firstSlave.PDOInput[firstSlave._statuswordPDOIndex]
+                if assertStatuswordState(statusword, StatuswordStates.SWITCH_ON_DISABLED):
+                    print("Reached switch on disabled")
+                    break
+        
+        startingState = getStatuswordState(statusword)
         endState = getStatuswordState(desiredState)
 
         stateTransitionControlwords = getStateTransitions(startingState, endState)
@@ -210,6 +237,9 @@ class master:
 
     def performHoming(self):
         """Start the homing process of all slaves."""
+
+        if not self.assertStatuswordStatePDO(StatuswordStates.OPERATION_ENABLED):
+            self.changeDeviceStatesPDO(StatuswordStates.OPERATION_ENABLED)
 
         self.changeOperatingMode(operatingModes.HOMING_MODE)
 
@@ -255,6 +285,9 @@ class master:
 
     def goToPositions(self, positions: list[int], profileAcceleration=10000, profileDeceleration=10000, profileVelocity=1000, blocking=True):
         """Send slaves to the given positions."""
+        if not self.assertStatuswordStatePDO(StatuswordStates.OPERATION_ENABLED):
+            self.changeDeviceStatesPDO(StatuswordStates.OPERATION_ENABLED)
+
         self.changeOperatingMode(operatingModes.PROFILE_POSITION_MODE)
 
         for slave, position in zip(self.slaves, positions):
