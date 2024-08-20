@@ -87,7 +87,7 @@ class etherCATSocketServer:
         self.softMaster.enablePDO()
         self.softMaster.sendPDO()
         self.softMaster.receivePDO()
-        self.softMaster.goToPositions(targetPositions)
+        self.softMaster.goToPositions(targetPositions, printActualPosition=True)
         self.softMaster.disablePDO()
         print("Done moving")
 

@@ -283,13 +283,14 @@ class master:
                 homing = False
                 break
 
-    def goToPositions(self, positions: list[int], profileAcceleration=10000, profileDeceleration=10000, profileVelocity=1000, blocking=True):
+    def goToPositions(self, positions: list[int], profileAcceleration=10000, profileDeceleration=10000, profileVelocity=1000, blocking=True, printActualPosition=False):
         """Send slaves to the given positions."""
         if not self.assertStatuswordStatePDO(StatuswordStates.OPERATION_ENABLED):
             self.changeDeviceStatesPDO(StatuswordStates.OPERATION_ENABLED)
 
         self.changeOperatingMode(operatingModes.PROFILE_POSITION_MODE)
 
+        # Put the start PPM motion controlword along with the target position/velocity/acceleration/deceleration in all slave buffers
         for slave, position in zip(self.slaves, positions):
             data = slave.RxData
             data[slave._controlwordPDOIndex] = 0b01111
@@ -302,6 +303,7 @@ class master:
         self.sendPDO()
         self.receivePDO()
 
+        # Remove the start PPM motion controlword from all slave buffers (neccessary to avoid faults)
         for slave in self.slaves:
             data = slave.RxData
             data[slave._controlwordPDOIndex] = 0b11111
@@ -313,7 +315,13 @@ class master:
         if blocking:
             moving = True
 
-            # Send recieve to clear the buffer of old target reached statuswords
+            if printActualPosition:
+                print("Actual positions:")
+                for slave in self.slaves:
+                    print(f"Slave {slave.node}", end='  |  ')
+
+
+            # Extra sends and recieves to clear the buffer of old target reached statuswords
             self.sendPDO()
             self.receivePDO()
 
@@ -324,16 +332,26 @@ class master:
                 self.sendPDO()
                 self.receivePDO()
 
+
                 oneSlaveMoving = False
                 for slave in self.slaves:
+
+                    # Print the actual position if asked
+                    if printActualPosition:
+                        print(slave.PDOInput[1], end='  |  ')
+
                     statusword = slave.PDOInput[slave._statuswordPDOIndex]
                     if statusword & (1 << 10) != 1 << 10:
                         oneSlaveMoving = True
                         break
-                
+
+                if printActualPosition:
+                    print('')
+                                
                 if not oneSlaveMoving:
                     moving = False
                     break
+
 
     def __del__(self, checkErrorRegisters=True):
 
