@@ -235,7 +235,7 @@ class master:
         self.sendPDO()
         self.receivePDO()
 
-    def performHoming(self):
+    def performHoming(self, printActualPositions=True):
         """Start the homing process of all slaves."""
 
         if not self.assertStatuswordStatePDO(StatuswordStates.OPERATION_ENABLED):
@@ -266,6 +266,11 @@ class master:
         self.sendPDO()
         self.receivePDO()
 
+        if printActualPositions:
+            print("Slave actual positions:")
+            for slave in self.slaves:
+                print(f"Slave {slave.node}:", end='  |  ')
+
         homing = True
         while homing:
             self.sendPDO()
@@ -277,7 +282,12 @@ class master:
                 statusword = slave.PDOInput[slave._statuswordPDOIndex]
                 if statusword & (1 << 10) != 1 << 10:
                     oneSlaveStillHoming = True
-                    break
+
+                if printActualPositions:
+                    print(slave.PDOInput[1], end='  |  ')
+            
+            if printActualPositions:
+                print('')
             
             if not oneSlaveStillHoming:
                 homing = False
