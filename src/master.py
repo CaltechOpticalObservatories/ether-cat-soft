@@ -352,7 +352,6 @@ class master:
                     moving = False
                     break
 
-
     def __del__(self, checkErrorRegisters=True):
 
         if checkErrorRegisters:
