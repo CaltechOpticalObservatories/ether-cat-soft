@@ -47,14 +47,6 @@ def EPOS4MicroTRB_12CC_Config(slaveNum):
     # Set the home offset move distance
     dev.SDOWrite(dev.objectDictionary.HOME_OFFSET_MOVE_DISTANCE, -622080)
 
-    # TODO: Remove this is done for debugging
-    print(f"Slave {slaveNum} gains:")
-    controllerPGain = dev.SDORead(dev.objectDictionary.CURRENT_CONTROLLER_P_GAIN)
-    controllerIGain = dev.SDORead(dev.objectDictionary.CURRENT_CONTROLLER_I_GAIN)
-
-    print(f"P Gain: {controllerPGain},  I Gain: {controllerIGain}")
-
-
 def main():
     global EPOS4MicroMaster
 
