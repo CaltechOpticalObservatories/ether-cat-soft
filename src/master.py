@@ -343,7 +343,6 @@ class master:
                     statusword = slave.PDOInput[slave._statuswordPDOIndex]
                     if statusword & (1 << 10) != 1 << 10:
                         oneSlaveMoving = True
-                        break
 
                 if printActualPosition:
                     print('')
