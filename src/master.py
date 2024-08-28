@@ -206,7 +206,8 @@ class master:
                 self.receivePDO()
 
                 statusword = firstSlave.PDOInput[firstSlave._statuswordPDOIndex]
-                if assertStatuswordState(statusword, StatuswordStates.SWITCH_ON_DISABLED):
+                print(getStatuswordState(statusword), assertStatuswordState(statusword, StatuswordStates.NOT_READY_TO_SWITCH_ON), bin(statusword))
+                if not assertStatuswordState(statusword, StatuswordStates.NOT_READY_TO_SWITCH_ON):
                     print("Reached switch on disabled")
                     break
         

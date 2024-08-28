@@ -164,7 +164,9 @@ def getStatuswordState(statusword: int) -> str:
 
 def assertStatuswordState(statusword: int, state: StatuswordStates) -> bool:
     """Asserts that the current state of the statusword matches the desired state."""
-    maskedWord = (statusword & STATUSWORD_STATE_BITMASK) 
+    maskedWord = (statusword & STATUSWORD_STATE_BITMASK)
+    if state == StatuswordStates.NOT_READY_TO_SWITCH_ON: # Catch edge case where the state is not ready to switch on. (Value is 0, represents a lack of a bitmask and therefore this func always evaluates to true)
+        return maskedWord == state.value
     maskedWord = maskedWord & state.value # if its all the same nothing in the masked work should change
     return maskedWord == state.value # compare the masked and anded word to the state value
 

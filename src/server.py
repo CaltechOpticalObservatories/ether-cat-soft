@@ -87,7 +87,9 @@ class etherCATSocketServer:
         self.softMaster.enablePDO()
         self.softMaster.sendPDO()
         self.softMaster.receivePDO()
+        self.softMaster.changeDeviceStatesPDO(StatuswordStates.OPERATION_ENABLED)
         self.softMaster.goToPositions(targetPositions, printActualPosition=True)
+        self.softMaster.changeDeviceStatesPDO(StatuswordStates.QUICK_STOP_ACTIVE)
         self.softMaster.disablePDO()
         print("Done moving")
 
@@ -99,5 +101,6 @@ class etherCATSocketServer:
         self.softMaster.changeDeviceStatesPDO(StatuswordStates.OPERATION_ENABLED)
         self.softMaster.performHoming()
         print("Target reached/homing attained")
+        self.softMaster.changeDeviceStatesPDO(StatuswordStates.QUICK_STOP_ACTIVE)
         self.softMaster.disablePDO()
         print("Done homing")
