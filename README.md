@@ -15,7 +15,7 @@ This software uses the CAN over EtherCAT (CoE) protocol to control CiA 402 compl
 # Quick Start
 1. Update [settings](settings/masterSettings.yaml) with the network interface name of the NIC attached to the EtherCAT hardware.
 2. Update [settings](settings/serverSettings.yaml) with a host IP and port that will be assigned to this software's listening socket.
-3. On a remote machine use the same host IP and port to send motion requests to the workers. See `src/server.py` for a comment detailing the required message formats for various actions. To home all workers, send the byte output of: `struct.pack('<HB', 3, 0)`
+3. On a remote machine use the same host IP and port to send motion requests to the workers. See [`src/server.py`](src/server.py) for a comment detailing the required message formats for various actions. To home all workers, send the byte output of: `struct.pack('<HB', 3, 0)`
 
 
 # CiA 402 Specification  
@@ -31,7 +31,7 @@ The high level controller breaks down many high level fundamental requests into 
 A current limitation of the soft high level controller is that PDO communication is only possible once all workers have reached identical states and modes. The reason for this is that many of the performable actions (homing, and moving) complete at unique times for each worker, and all workers must recieve PDO during each message. This means that creating a truly generalized PDO solution must handle time sensitive input, sequence sensitive input, and wait/continue logic unique to physical robotic systems. The difficulty of this task in comparison to the new capabilities was too low to justify for the FCS and CSU for which this repository was intially designed.
 
 ## Hardware Abstraction Layer
-The hardware abstraction layer is responsible for sending actual information over the NIC to the workers. Currently, the only HAL setup for this repository is the `pysoemHAL`. It uses [pysoem](https://github.com/bnjmnp/pysoem), a cython wrapper for [SOEM](https://github.com/OpenEtherCATsociety/SOEM). Something to keep in mind is that these are designed to be *simple* soft EtherCAT controllers, and as a result it is difficult to directly change the CoE messages being sent, which likely prevents using CoE to its full potential. Future HALs should be made with the same function names and send the same CoE telegrams (this can be verified with wireshark). An additional consequence is that the high level soft controller and `pysoemHAL` have very similar function names.
+The hardware abstraction layer is responsible for sending actual information over the NIC to the workers. Currently, the only HAL setup for this repository is the [`pysoemHAL`](src/HAL/pysoem/pysoemMaster.py). It uses [pysoem](https://github.com/bnjmnp/pysoem), a cython wrapper for [SOEM](https://github.com/OpenEtherCATsociety/SOEM). Something to keep in mind is that these are designed to be *simple* soft EtherCAT controllers, and as a result it is difficult to directly change the CoE messages being sent, which likely prevents using CoE to its full potential. Future HALs should be made with the same function names and send the same CoE telegrams (this can be verified with wireshark). An additional consequence is that the high level soft controller and [`pysoemHAL`](src/HAL/pysoem/pysoemMaster.py) have very similar function names.
 
 # Notes
 - Software tested on [EPOS4 Micro 24/5 EtherCAT](https://www.maxongroup.com/maxon/view/product/654731)
