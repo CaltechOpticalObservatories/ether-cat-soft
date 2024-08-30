@@ -2,15 +2,19 @@
 # Table of Contents
 1. [Introduction]()
 2. [Quick Start]()
-
+3. [CiA 402 Specification]()
+4. [Software Architecture]()
+    - [Server]()
+    - [High Level Soft Controller]()
+    - [Hardware Abstraction Layer]()
+5. [Notes]()
 
 # Introduction
 This software uses the CAN over EtherCAT (CoE) protocol to control CiA 402 compliant power drive systems from a dedicated control computer/linux box. The control computer should have a dedicated NIC attached via ethernet cable to an EtherCAT motor controller hardware network in a ring topology. Another NIC should be used to input high level requests via a socket to this software.
 
 # Quick Start
-1. Update [settings](settings/masterSettings.yaml) with the network interface name of the NIC attached to the EtherCAT hardware
-2. Update [settings](settings/serverSettings.yaml) with a host IP and port that will be assigned to this software's
-listening socket
+1. Update [settings](settings/masterSettings.yaml) with the network interface name of the NIC attached to the EtherCAT hardware.
+2. Update [settings](settings/serverSettings.yaml) with a host IP and port that will be assigned to this software's listening socket.
 3. On a remote machine use the same host IP and port to send motion requests to the workers. See `src/server.py` for a comment detailing the required message formats for various actions. To home all workers, send the byte output of: `struct.pack('<HB', 3, 0)`
 
 
@@ -32,3 +36,4 @@ The hardware abstraction layer is responsible for sending actual information ove
 # Notes
 - Software tested on [EPOS4 Micro 24/5 EtherCAT](https://www.maxongroup.com/maxon/view/product/654731)
 - Most of the development time was spent understanding the CiA 402 specification and maxon documentation. The repo could benefit from more polish or a refactor.
+- Currently the only CiA 402 supported operation modes are Homing Mode and Profile Position Mode (non-continuous)
