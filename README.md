@@ -1,13 +1,13 @@
 # EtherCAT Soft Controller
 # Table of Contents
-1. [Introduction]()
-2. [Quick Start]()
-3. [CiA 402 Specification]()
-4. [Software Architecture]()
-    - [Server]()
-    - [High Level Soft Controller]()
-    - [Hardware Abstraction Layer]()
-5. [Notes]()
+1. [Introduction](#introduction)
+2. [Quick Start](#quick-start)
+3. [CiA 402 Specification](#cia-402-specification)
+4. [Software Architecture](#software-architecture)
+    - [Server](#server)
+    - [High Level Soft Controller](#high-level-soft-controller)
+    - [Hardware Abstraction Layer](#hardware-abstraction-layer)
+5. [Notes](#notes)
 
 # Introduction
 This software uses the CAN over EtherCAT (CoE) protocol to control CiA 402 compliant power drive systems from a dedicated control computer/linux box. The control computer should have a dedicated NIC attached via ethernet cable to an EtherCAT motor controller hardware network in a ring topology. Another NIC should be used to input high level requests via a socket to this software.
@@ -23,7 +23,7 @@ The CAN in Automation (CiA) group has released a technical specification for pow
 
 # Software Architecture
 ## Server
-Currently, the server is a simple socket that listens for incoming messages and performs certain actions based off of the requests within the messages. For more details on the specific data that needs to be sent to the socket to request certain actions, see `src/server.py`.
+Currently, the server is a simple socket that listens for incoming messages and performs certain actions based off of the requests within the messages. For more details on the specific data that needs to be sent to the socket to request certain actions, see [`src/server.py`](src/server.py).
 
 ## High Level Soft Controller
 The high level controller breaks down many high level fundamental requests into sequences of CoE commands that will be performed by the hardware abstraction layer (HAL). This includes configuration tasks on startup. Additionally, it does a lot of 'book keeping' taks, such as tracking worker process data object assignments, fully automates device state changes, and handling the network management state at the current scope of the project (it's easy to break with the addition of new features). 
