@@ -33,6 +33,10 @@ import sys
 import socket
 import struct
 import yaml
+import logging
+
+# Set up logging for better debugging
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 PATH = os.path.abspath(__file__).replace('src/server.py', '')
 sys.path.append(PATH)
@@ -40,67 +44,101 @@ sys.path.append(PATH)
 from src.master import master, slave
 from src.helpers import StatuswordStates
 
+
 class etherCATSocketServer:
 
     def __init__(self, softMasterInstance: master):
-
         self.softMaster = softMasterInstance
 
-        with open(f'{PATH}/settings/serverSettings.yaml', 'r') as f:
-            serverSettings = yaml.safe_load(f)
-        
-        self.host = serverSettings['host']
-        self.port = serverSettings['port']
+        # Load server settings from YAML config
+        try:
+            with open(f'{PATH}/settings/serverSettings.yaml', 'r') as f:
+                serverSettings = yaml.safe_load(f)
+            self.host = serverSettings['host']
+            self.port = serverSettings['port']
+        except Exception as e:
+            logging.error(f"Error loading server settings: {e}")
+            raise
 
-        self.serverSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.serverSocket.bind((self.host, self.port))
-        self.serverSocket.listen(5)
+        # Initialize server socket
+        try:
+            self.serverSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.serverSocket.bind((self.host, self.port))
+            self.serverSocket.listen(5)
+            logging.info(f"Server listening on {self.host}:{self.port}")
+        except Exception as e:
+            logging.error(f"Error setting up server socket: {e}")
+            raise
 
     def run(self):
         while True:
             connection, address = self.serverSocket.accept()
-            buf = connection.recv(2)
-            if len(buf) > 0: # Received a message
-                messageLength = struct.unpack('<H', buf)[0] # Get message length
-                buf = connection.recv(1)  # Get action type code from the 3rd byte
-                actionType = struct.unpack('<B', buf)[0]
+            logging.info(f"Accepted connection from {address}")
+            try:
+                buf = connection.recv(2)
+                if len(buf) > 0:  # Received a message
+                    messageLength = struct.unpack('<H', buf)[0]  # Get message length
+                    logging.debug(f"Message length: {messageLength}")
 
-                match actionType:
-                    case 0:
-                        self.HomingPDO(connection, messageLength)
-                    case 1:
-                        self.PPMPDO(connection, messageLength)
-                    case _:
-                        print('Invalid action type')
+                    buf = connection.recv(1)  # Get action type code from the 3rd byte
+                    if not buf:
+                        logging.error("Failed to receive action type byte")
+                        continue
+                    actionType = struct.unpack('<B', buf)[0]
 
-    
-    def PPMPDO(self, connection: socket.socket, messageLength):
+                    logging.debug(f"Action type: {actionType}")
 
-        print("Moving to target positions")
-        targetPositions = []        
-        while messageLength - 3 > 0: # Subtract message length by 3 to account for the 3 bytes already read
-            buf = connection.recv(4)
-            targetPositions += [struct.unpack('<i', buf)[0]]
+                    # Process based on action type
+                    match actionType:
+                        case 0:
+                            self.HomingPDO(connection, messageLength)
+                        case 1:
+                            self.PPMPDO(connection, messageLength)
+                        case _:
+                            logging.error('Invalid action type received')
+            except Exception as e:
+                logging.error(f"Error while processing message: {e}")
 
-            messageLength -= len(buf)
+    def PPMPDO(self, connection: socket.socket, messageLength: int):
+        try:
+            logging.info("Moving to target positions")
+            targetPositions = []
+            remainingLength = messageLength - 3  # Subtract 3 bytes already read (length and action type)
+            logging.debug(f"Remaining length to process: {remainingLength}")
 
-        self.softMaster.enablePDO()
-        self.softMaster.sendPDO()
-        self.softMaster.receivePDO()
-        self.softMaster.changeDeviceStatesPDO(StatuswordStates.OPERATION_ENABLED)
-        self.softMaster.goToPositions(targetPositions, printActualPosition=True)
-        self.softMaster.changeDeviceStatesPDO(StatuswordStates.QUICK_STOP_ACTIVE)
-        self.softMaster.disablePDO()
-        print("Done moving")
+            while remainingLength > 0:  # Loop through the message and extract target positions
+                buf = connection.recv(4)
+                if not buf:
+                    logging.warning("Failed to receive target position byte")
+                    break
+                targetPosition = struct.unpack('<i', buf)[0]
+                targetPositions.append(targetPosition)
+                remainingLength -= len(buf)
+                logging.debug(f"Received target position: {targetPosition}, remaining length: {remainingLength}")
 
-    def HomingPDO(self, connection, messageLength):
-        print("Homing all axes")
-        self.softMaster.enablePDO()
-        self.softMaster.sendPDO()
-        self.softMaster.receivePDO()
-        self.softMaster.changeDeviceStatesPDO(StatuswordStates.OPERATION_ENABLED)
-        self.softMaster.performHoming()
-        print("Target reached/homing attained")
-        self.softMaster.changeDeviceStatesPDO(StatuswordStates.QUICK_STOP_ACTIVE)
-        self.softMaster.disablePDO()
-        print("Done homing")
+            # Handle the movement process
+            self.softMaster.enablePDO()
+            self.softMaster.sendPDO()
+            self.softMaster.receivePDO()
+            self.softMaster.changeDeviceStatesPDO(StatuswordStates.OPERATION_ENABLED)
+            self.softMaster.goToPositions(targetPositions, printActualPosition=True)
+            self.softMaster.changeDeviceStatesPDO(StatuswordStates.QUICK_STOP_ACTIVE)
+            self.softMaster.disablePDO()
+            logging.info("Done moving")
+        except Exception as e:
+            logging.error(f"Error in PPMPDO: {e}")
+
+    def HomingPDO(self, connection: socket.socket, messageLength: int):
+        try:
+            logging.info("Homing all axes")
+            self.softMaster.enablePDO()
+            self.softMaster.sendPDO()
+            self.softMaster.receivePDO()
+            self.softMaster.changeDeviceStatesPDO(StatuswordStates.OPERATION_ENABLED)
+            self.softMaster.performHoming()
+            logging.info("Target reached/homing attained")
+            self.softMaster.changeDeviceStatesPDO(StatuswordStates.QUICK_STOP_ACTIVE)
+            self.softMaster.disablePDO()
+            logging.info("Done homing")
+        except Exception as e:
+            logging.error(f"Error in HomingPDO: {e}")
