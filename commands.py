@@ -1,6 +1,7 @@
 import socket
 import struct
 import time
+import argparse
 
 class Commands:
     def __init__(self, host, port):
@@ -65,20 +66,31 @@ class Commands:
         except Exception as e:
             print(f"Error sending message: {e}")
 
-# Usage example
+def main():
+    parser = argparse.ArgumentParser(description="Send commands to the server.")
+    parser.add_argument('host', type=str, help='Server host IP address')
+    parser.add_argument('port', type=int, help='Server port')
+    parser.add_argument('--send-ppmpdo', type=int, help='Target position for PPM PDO message')
+    parser.add_argument('--send-homingpdo', action='store_true', help='Send Homing PDO message')
+    parser.add_argument('--send-multiple-ppmpdo', nargs=4, type=int, metavar=('P1', 'P2', 'P3', 'WAIT_TIME'),
+                        help='Send multiple PPM PDO messages with target positions (P1, P2, P3) and wait time')
+
+    args = parser.parse_args()
+
+    commands = Commands(args.host, args.port)
+
+    if args.send_ppmpdo is not None:
+        print(f"Sending PPM PDO message to position {args.send_ppmpdo}")
+        commands.send_ppmpdo_message(args.send_ppmpdo)
+
+    if args.send_homingpdo:
+        print("Sending Homing PDO message")
+        commands.send_homingpdo_message()
+
+    if args.send_multiple_ppmpdo:
+        target_position1, target_position2, target_position3, wait_time = args.send_multiple_ppmpdo
+        print(f"Sending multiple PPM PDO messages: P1={target_position1}, P2={target_position2}, P3={target_position3}, wait={wait_time}s")
+        commands.send_multiple_ppmpdo_messages(target_position1, target_position2, target_position3, wait_time)
+
 if __name__ == '__main__':
-    host = '131.215.193.25'  # Server IP address
-    port = 7469  # Server port
-    target_position1 = 1000  # Example target position for PPM PDO
-    target_position2 = 2000  # Another example target position
-    target_position3 = 3000  # Another example target position
-    wait_time = 2  # Time to wait (in seconds) between each move
-
-    # Create an instance of the Commands class
-    commands = Commands(host, port)
-
-    # Send multiple PPM PDO messages with wait times
-    commands.send_multiple_ppmpdo_messages(target_position1, target_position2, target_position3, wait_time)
-
-    # Send Homing PDO message (if needed)
-    # commands.send_homingpdo_message()
+    main()
