@@ -19,7 +19,7 @@ class pysoemHAL:
     ### Network interface methods ###
     def openNetworkInterface(self):
         """Opens the network interface with the given interface name."""
-        self.master.open(self.ifname)  # pysoem doesn't return anything, so we can't check if it was successful
+        self.master.open(self.ifname) # pysoem doesn't return anything, so we can't check if it was successful
 
     def closeNetworkInterface(self):
         """Closes the network interface."""
@@ -27,7 +27,7 @@ class pysoemHAL:
 
     ### SDO methods ###
     def SDORead(self, slaveInstance, address: tuple):
-        """Reads a Service Data Object (SDO) from a slave."""
+
         slave = self.master.slaves[slaveInstance.node]
 
         if isinstance(address, Enum):
@@ -43,7 +43,6 @@ class pysoemHAL:
         return response
     
     def SDOWrite(self, slaveInstance, address: tuple, data, completeAccess=False):
-        """Writes a Service Data Object (SDO) to a slave."""
         slave = self.master.slaves[slaveInstance.node]
 
         if isinstance(address, Enum):
@@ -54,32 +53,11 @@ class pysoemHAL:
 
     ### Slave configuration methods ###
     def initializeSlaves(self):
-        """Creates slave objects for each slave and assigns them to self.slaves. Returns the number of slaves."""
+        """"Creates slave objects for each slave and assigns them to self.slaves. Returns the number of slaves."""
         numSlaves = self.master.config_init()
         self.slaves = self.master.slaves
 
-        # Print out the slave information
-        self.print_slave_info()
-
         return numSlaves
-
-    def print_slave_info(self):
-        """Prints out detailed information for each slave."""
-        print("Slave Information:")
-        for slave in self.master.slaves:
-            # Slave node (unique identifier for each slave)
-            node = slave.node
-            # Vendor ID (assuming available)
-            vendor_id = slave.vendor_id if hasattr(slave, 'vendor_id') else 'N/A'
-            # Product Code (assuming available)
-            product_code = slave.product_code if hasattr(slave, 'product_code') else 'N/A'
-            # Name (may be an optional attribute depending on slave's profile)
-            slave_name = slave.name if hasattr(slave, 'name') else f"Slave {node}"
-
-            # Print out the slave information
-            print(f"Slave {node} - Name: {slave_name}, Vendor ID: {vendor_id}, Product Code: {product_code}")
-
-        print("\nTotal slaves:", len(self.master.slaves))
     
     def addConfigurationFunc(self, slaveInstance, configFunc):
         """Adds a configuration function to the slave.
