@@ -78,6 +78,15 @@ class master:
                 "currentTxPDOMap": slave.currentTxPDOMap,
             }
             slave_info.append(slave_data)
+        
+        print("Slave Information:")
+        for slave_data in slave_info:
+            print(f"Node: {slave_data['node']}")
+            print(f"  State: {slave_data['state']}")
+            print(f"  Object Dictionary: {slave_data['objectDictionary']}")
+            print(f"  Current Rx PDO Map: {slave_data['currentRxPDOMap']}")
+            print(f"  Current Tx PDO Map: {slave_data['currentTxPDOMap']}")
+            print("-" * 40)
 
         return slave_info
 
