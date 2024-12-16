@@ -80,7 +80,7 @@ class etherCATSocketServer:
                     messageLength = struct.unpack('<H', buf)[0]  # Get message length
                     logging.debug(f"Message length: {messageLength}")
 
-                    buf = connection.recv(1)  # Get action type code from the 3rd byte
+                    buf = connection.recv(1)  # Get action type byte
                     if not buf:
                         logging.error("Failed to receive action type byte")
                         continue
@@ -94,10 +94,37 @@ class etherCATSocketServer:
                             self.HomingPDO(connection, messageLength)
                         case 1:
                             self.PPMPDO(connection, messageLength)
+                        case 2:
+                            self.get_slaves_info(connection)
                         case _:
                             logging.error('Invalid action type received')
+
             except Exception as e:
                 logging.error(f"Error while processing message: {e}")
+                connection.close()
+
+    def get_slaves_info(self, connection):
+        """Handle request to send slave information to the client."""
+        # Start with a base message length (e.g., 2 bytes for the length and 1 byte for action type)
+        slaves_info_message = b""
+
+        # Header: Length (2 bytes) + Action Type (1 byte)
+        slaves_info_message += struct.pack('<H', 2 + len(self.slaves) * 20)  # Total length (2 bytes for header, 20 bytes per slave)
+        slaves_info_message += struct.pack('<B', 0x02)  # Action type for slave info request
+
+        # Add slave details to the message
+        for slave in self.slaves:
+            # For simplicity, each slave can be represented by a fixed-size string (20 bytes) for ID, name, and status
+            slave_info = f"ID: {slave['id']}, Name: {slave['name']}, Status: {slave['status']}".ljust(20)
+            slaves_info_message += slave_info.encode('utf-8')  # Ensure it's 20 bytes long, pad if necessary
+
+        try:
+            # Send the slave information back to the client
+            connection.sendall(slaves_info_message)
+            logging.debug(f"Sent slave info message: {slaves_info_message}")
+        except Exception as e:
+            logging.error(f"Error sending slave info: {e}")
+            connection.close()
 
     def PPMPDO(self, connection: socket.socket, messageLength: int, slave_ids: list[int] = None):
         try:
