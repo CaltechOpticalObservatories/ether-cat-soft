@@ -8,14 +8,17 @@ class Commands:
         self.host = host
         self.port = port
 
-    def send_ppmpdo_message(self, target_position):
-        """Send a PPM PDO message to the server."""
+    def send_ppmpdo_message(self, target_position, slave_id=None):
+        """Send a PPM PDO message to the server for a specific slave or all slaves."""
         action_type = 1  # Action type for PPM PDO (1)
-
-        # Pack the message according to the protocol:
-        # [Message Length (2 bytes), Action Type (1 byte), Target Position (4 bytes)]
+        
+        # Create the message base: [Message Length (2 bytes), Action Type (1 byte)]
         message = struct.pack('<H', 7)  # Message length (7 bytes in total)
         message += struct.pack('<B', action_type)  # Action type (1 byte)
+
+        # Add the slave ID if provided, and then the target position
+        if slave_id is not None:
+            message += struct.pack('<B', slave_id)  # Slave ID (1 byte)
         message += struct.pack('<i', target_position)  # Target position (4 bytes)
 
         # Send the message to the server
@@ -33,11 +36,18 @@ class Commands:
         # Send the message to the server
         self._send_message(message)
 
-    def send_multiple_ppmpdo_messages(self, target_positions, wait_time):
-        """Send PPM PDO messages for a list of target positions with wait times in between."""
-        for idx, target_position in enumerate(target_positions):
-            print(f"Moving to P{idx + 1}: {target_position}")
-            self.send_ppmpdo_message(target_position)
+    def send_multiple_ppmpdo_messages(self, target_positions, slave_ids=None, wait_time=1):
+        """Send PPM PDO messages for a list of target positions to specific slaves with wait times in between."""
+        if slave_ids is None:
+            slave_ids = range(len(target_positions))  # Default to move all slaves
+
+        if len(target_positions) != len(slave_ids):
+            print("Error: The number of target positions must match the number of slave IDs.")
+            return
+
+        for idx, (target_position, slave_id) in enumerate(zip(target_positions, slave_ids)):
+            print(f"Moving slave {slave_id} to position {target_position}")
+            self.send_ppmpdo_message(target_position, slave_id)
             time.sleep(wait_time)  # Wait for specified time
 
     def _send_message(self, message):
@@ -47,7 +57,7 @@ class Commands:
                 client_socket.connect((self.host, self.port))  # Connect to the server
                 client_socket.send(message)  # Send the message
 
-                # # Optionally, receive a response (e.g., success or error)
+                # Optionally, receive a response (e.g., success or error)
                 # response = client_socket.recv(1)
                 # if response:
                 #     print(f"Received response: {response}")
@@ -63,6 +73,7 @@ def main():
     parser.add_argument('--send-ppmpdo', type=int, help='Target position for PPM PDO message')
     parser.add_argument('--send-homingpdo', action='store_true', help='Send Homing PDO message')
     parser.add_argument('--send-multiple-ppmpdo', nargs='+', type=int, metavar='POSITION', help='Send multiple PPM PDO messages with target positions')
+    parser.add_argument('--slave-ids', nargs='+', type=int, metavar='SLAVE_ID', help='List of slave IDs to send PPM PDO messages to')
     parser.add_argument('--wait-time', type=float, default=1, help='Wait time (in seconds) between sending messages')
 
     args = parser.parse_args()
@@ -78,10 +89,13 @@ def main():
         commands.send_homingpdo_message()
 
     if args.send_multiple_ppmpdo:
-        # Convert the input list of positions and send them
-        target_positions = args.send_multiple_ppmpdo
-        print(f"Sending multiple PPM PDO messages with positions: {target_positions} and wait time {args.wait_time}s")
-        commands.send_multiple_ppmpdo_messages(target_positions, args.wait_time)
+        # Ensure the number of positions matches the number of slave IDs
+        slave_ids = args.slave_ids if args.slave_ids else range(len(args.send_multiple_ppmpdo))
+        if len(args.send_multiple_ppmpdo) != len(slave_ids):
+            print("Error: The number of target positions must match the number of slave IDs.")
+        else:
+            print(f"Sending multiple PPM PDO messages with positions: {args.send_multiple_ppmpdo} and slave IDs: {slave_ids}")
+            commands.send_multiple_ppmpdo_messages(args.send_multiple_ppmpdo, slave_ids, args.wait_time)
 
 if __name__ == '__main__':
     main()
