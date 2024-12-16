@@ -35,12 +35,11 @@ class master:
         for i, slaveInst in enumerate(self.HAL.slaves):
             slave_name = f"Slave_{i}"  # Assign a unique name based on index
             slaveInst.name = slave_name  # Ensure the slave has a unique name
-            slaveInst.node = i  # Ensure the node ID is unique for each slave
             self.slaves.append(slave(self, i, slaveInst.name))
 
         # Optionally, log slave information to verify uniqueness
         for i, slave in enumerate(self.slaves):
-            print(f"Slave {i}: Name: {slave.name}, Node ID: {slave.node}")
+            print(f"Slave {i}: Name: {slave.name}")
 
     def configureSlaves(self):
         """Configure slaves with specific constants, mode and PDO mappings.
