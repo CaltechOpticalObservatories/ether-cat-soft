@@ -67,21 +67,19 @@ class pysoemHAL:
         """Prints out detailed information for each slave."""
         print("Slave Information:")
         for slave in self.master.slaves:
-            # Try to access available attributes
-            print("Slave object:", slave)  # Debugging step to inspect the slave object
-
             # Inspect the available attributes using dir()
             print("Available attributes:", dir(slave))  # Prints out all attributes of the slave
 
             try:
-                # Try accessing the 'node' attribute if it exists
-                node = getattr(slave, 'node', 'N/A')  # Default to 'N/A' if 'node' doesn't exist
-                vendor_id = getattr(slave, 'vendor_id', 'N/A')  # Default to 'N/A' if 'vendor_id' doesn't exist
-                product_code = getattr(slave, 'product_code', 'N/A')  # Default to 'N/A' if 'product_code' doesn't exist
-                slave_name = getattr(slave, 'name', f"Slave {node}")  # Default to 'Slave <node>' if 'name' doesn't exist
+                # Access slave attributes
+                slave_id = getattr(slave, 'id', 'N/A')  # Use 'id' as the identifier
+                slave_name = getattr(slave, 'name', f"Slave {slave_id}")  # Default to 'Slave <id>' if 'name' doesn't exist
+                manufacturer = getattr(slave, 'man', 'N/A')  # Manufacturer ID
+                revision = getattr(slave, 'rev', 'N/A')  # Revision number
+                state = getattr(slave, 'state', 'N/A')  # Current state of the slave
 
                 # Print out the slave information
-                print(f"Slave {node} - Name: {slave_name}, Vendor ID: {vendor_id}, Product Code: {product_code}")
+                print(f"Slave ID: {slave_id} - Name: {slave_name}, Manufacturer ID: {manufacturer}, Revision: {revision}, State: {state}")
             except Exception as e:
                 print(f"Error accessing slave attributes: {e}")
 
