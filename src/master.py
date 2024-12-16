@@ -126,6 +126,13 @@ class master:
     def setCollectiveDeviceState(self, state: int | str):
         for slave in self.slaves:
             slave.setDeviceState(state)
+    
+    def get_slave_by_node(self, node_id):
+        """Return the slave object corresponding to the given node ID."""
+        for slave in self.slaves:
+            if slave.node == node_id:
+                return slave
+        return None  # Return None if no slave with the given node ID is found
 
     ### PDO Methods ###
     """The PDO methods assume that all slaves are in the same state and that the PDOS all have the same base configuration, or at least that differences
@@ -320,7 +327,7 @@ class master:
                 break
 
     def goToPositions(self, positions: list[int], profileAcceleration=10000, profileDeceleration=10000, profileVelocity=1000, blocking=True, printActualPosition=False, slave_ids=None):
-        """Send slaves to the given positions."""
+        """Send slaves to the given positions based on their node IDs."""
         
         # Ensure the network is in operational mode
         if not self.assertStatuswordStatePDO(StatuswordStates.OPERATION_ENABLED):
@@ -330,15 +337,19 @@ class master:
 
         # If no slave_ids are provided, assume all slaves get the same position
         if slave_ids is None:
-            slave_ids = range(len(self.slaves))  # All slaves get assigned a position
+            slave_ids = [slave.node for slave in self.slaves]  # Use slave node IDs
 
         # Ensure we have enough positions for the number of slaves (or vice versa)
         if len(positions) != len(slave_ids):
             raise ValueError("The number of positions must match the number of slave IDs provided.")
 
-        # Put the start PPM motion controlword along with the target position/velocity/acceleration/deceleration in all slave buffers
-        for slave_id, position in zip(slave_ids, positions):
-            slave = self.slaves[slave_id]  # Get the slave by ID
+        # Map slave node ID to target position
+        for slave_node, position in zip(slave_ids, positions):
+            slave = self.get_slave_by_node(slave_node)  # Get the slave by its node ID
+            if slave is None:
+                raise ValueError(f"Slave with node {slave_node} not found.")
+
+            # Prepare the data for the slave
             data = slave.RxData
             data[slave._controlwordPDOIndex] = 0b01111  # Control word to start movement
             data[1] = position  # Target position
@@ -396,6 +407,7 @@ class master:
                 if not oneSlaveMoving:
                     moving = False
                     break
+
 
     def __del__(self, checkErrorRegisters=True):
 
