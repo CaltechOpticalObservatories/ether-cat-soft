@@ -28,18 +28,13 @@ class master:
 
     ### Slave configuration methods ###
     def initializeSlaves(self):
-        """Creates slave objects in the HAL and in this instance. Sends some basic information to the actual hardware to do this."""
+        """Creates slave objects in the HAL and in this instance. Sends some basic information to the 
+        actual hardware to do this."""
         self.numSlaves = self.HAL.initializeSlaves()
         
         self.slaves = []
         for i, slaveInst in enumerate(self.HAL.slaves):
-            slave_name = f"Slave_{i}"  # Assign a unique name based on index
-            slaveInst.name = slave_name  # Ensure the slave has a unique name
-            self.slaves.append(slave(self, i, slaveInst.name))
-
-        # Optionally, log slave information to verify uniqueness
-        for i, slave in enumerate(self.slaves):
-            print(f"Slave {i}: Name: {slave.name}")
+            self.slaves += [slave(self, i, slaveInst.name)]
 
     def configureSlaves(self):
         """Configure slaves with specific constants, mode and PDO mappings.
