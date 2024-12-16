@@ -103,32 +103,52 @@ class etherCATSocketServer:
                 logging.error(f"Error while processing message: {e}")
                 connection.close()
 
-    def get_slaves_info(self, connection):
+    def get_slaves_info(self):
         """Handle request to send slave information to the client."""
         # Start with a base message length (e.g., 2 bytes for the length and 1 byte for action type)
         self.softMaster.getSlavesInfo()
 
     def PPMPDO(self, connection: socket.socket, messageLength: int, slave_ids: list[int] = None):
+        """
+        Message Length:  2 bytes
+        Action Type:     1 byte
+        Slave ID 1:      1 byte
+        Target Position 1: 4 bytes
+        Slave ID 2:      1 byte
+        Target Position 2: 4 bytes
+        """
         try:
             logging.info("Moving to target positions")
             targetPositions = []
+            slaveIds = []
             remainingLength = messageLength - 3  # Subtract 3 bytes already read (length and action type)
             logging.debug(f"Remaining length to process: {remainingLength}")
 
-            # Read the target positions from the connection
-            while remainingLength > 0:  # Loop through the message and extract target positions
-                buf = connection.recv(4)
-                if not buf:
+            # Read slave IDs and target positions from the connection
+            while remainingLength > 0:  # Loop through the message and extract slave IDs and target positions
+                # Read the slave ID (1 byte)
+                slave_id_buf = connection.recv(1)
+                if not slave_id_buf:
+                    logging.warning("Failed to receive slave ID byte")
+                    break
+                slave_id = struct.unpack('<B', slave_id_buf)[0]
+                slaveIds.append(slave_id)
+                remainingLength -= len(slave_id_buf)
+                logging.debug(f"Received slave ID: {slave_id}, remaining length: {remainingLength}")
+
+                # Read the target position (4 bytes)
+                target_position_buf = connection.recv(4)
+                if not target_position_buf:
                     logging.warning("Failed to receive target position byte")
                     break
-                targetPosition = struct.unpack('<i', buf)[0]
-                targetPositions.append(targetPosition)
-                remainingLength -= len(buf)
-                logging.debug(f"Received target position: {targetPosition}, remaining length: {remainingLength}")
+                target_position = struct.unpack('<i', target_position_buf)[0]
+                targetPositions.append(target_position)
+                remainingLength -= len(target_position_buf)
+                logging.debug(f"Received target position: {target_position}, remaining length: {remainingLength}")
 
-            # If no slave_ids are provided, assume all slaves should move
+            # If no slave_ids are provided, use the list of slave IDs we've just read
             if slave_ids is None:
-                slave_ids = range(len(targetPositions))  # Default to moving all slaves
+                slave_ids = slaveIds  # Use the slave IDs received in the message
 
             # Check that the number of positions matches the number of slaves (or slave_ids)
             if len(targetPositions) != len(slave_ids):
@@ -150,6 +170,7 @@ class etherCATSocketServer:
 
         except Exception as e:
             logging.error(f"Error in PPMPDO: {e}")
+
 
     def HomingPDO(self, connection: socket.socket, messageLength: int):
         try:
