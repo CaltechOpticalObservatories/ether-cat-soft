@@ -33,22 +33,12 @@ class Commands:
         # Send the message to the server
         self._send_message(message)
 
-    def send_multiple_ppmpdo_messages(self, target_position1, target_position2, target_position3, wait_time):
-        """Send PPM PDO messages for three target positions with wait times in between."""
-        # Move to target position P1
-        print(f"Moving to P1: {target_position1}")
-        self.send_ppmpdo_message(target_position1)
-        time.sleep(wait_time)  # Wait for specified time
-
-        # Move to target position P2
-        print(f"Moving to P2: {target_position2}")
-        self.send_ppmpdo_message(target_position2)
-        time.sleep(wait_time)  # Wait for specified time
-
-        # Move to target position P3
-        print(f"Moving to P3: {target_position3}")
-        self.send_ppmpdo_message(target_position3)
-        time.sleep(wait_time)  # Wait for specified time
+    def send_multiple_ppmpdo_messages(self, target_positions, wait_time):
+        """Send PPM PDO messages for a list of target positions with wait times in between."""
+        for idx, target_position in enumerate(target_positions):
+            print(f"Moving to P{idx + 1}: {target_position}")
+            self.send_ppmpdo_message(target_position)
+            time.sleep(wait_time)  # Wait for specified time
 
     def _send_message(self, message):
         """Send a message to the server and optionally receive a response."""
@@ -57,12 +47,12 @@ class Commands:
                 client_socket.connect((self.host, self.port))  # Connect to the server
                 client_socket.send(message)  # Send the message
 
-                # Optionally, receive a response (e.g., success or error)
-                response = client_socket.recv(1)
-                if response:
-                    print(f"Received response: {response}")
-                else:
-                    print("No response from server")
+                # # Optionally, receive a response (e.g., success or error)
+                # response = client_socket.recv(1)
+                # if response:
+                #     print(f"Received response: {response}")
+                # else:
+                #     print("No response from server")
         except Exception as e:
             print(f"Error sending message: {e}")
 
@@ -72,8 +62,8 @@ def main():
     parser.add_argument('port', type=int, help='Server port')
     parser.add_argument('--send-ppmpdo', type=int, help='Target position for PPM PDO message')
     parser.add_argument('--send-homingpdo', action='store_true', help='Send Homing PDO message')
-    parser.add_argument('--send-multiple-ppmpdo', nargs=4, type=int, metavar=('P1', 'P2', 'P3', 'WAIT_TIME'),
-                        help='Send multiple PPM PDO messages with target positions (P1, P2, P3) and wait time')
+    parser.add_argument('--send-multiple-ppmpdo', nargs='+', type=int, metavar='POSITION', help='Send multiple PPM PDO messages with target positions')
+    parser.add_argument('--wait-time', type=float, default=1, help='Wait time (in seconds) between sending messages')
 
     args = parser.parse_args()
 
@@ -88,9 +78,10 @@ def main():
         commands.send_homingpdo_message()
 
     if args.send_multiple_ppmpdo:
-        target_position1, target_position2, target_position3, wait_time = args.send_multiple_ppmpdo
-        print(f"Sending multiple PPM PDO messages: P1={target_position1}, P2={target_position2}, P3={target_position3}, wait={wait_time}s")
-        commands.send_multiple_ppmpdo_messages(target_position1, target_position2, target_position3, wait_time)
+        # Convert the input list of positions and send them
+        target_positions = args.send_multiple_ppmpdo
+        print(f"Sending multiple PPM PDO messages with positions: {target_positions} and wait time {args.wait_time}s")
+        commands.send_multiple_ppmpdo_messages(target_positions, args.wait_time)
 
 if __name__ == '__main__':
     main()

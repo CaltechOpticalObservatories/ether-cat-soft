@@ -99,13 +99,14 @@ class etherCATSocketServer:
             except Exception as e:
                 logging.error(f"Error while processing message: {e}")
 
-    def PPMPDO(self, connection: socket.socket, messageLength: int):
+    def PPMPDO(self, connection: socket.socket, messageLength: int, slave_ids: list[int] = None):
         try:
             logging.info("Moving to target positions")
             targetPositions = []
             remainingLength = messageLength - 3  # Subtract 3 bytes already read (length and action type)
             logging.debug(f"Remaining length to process: {remainingLength}")
 
+            # Read the target positions from the connection
             while remainingLength > 0:  # Loop through the message and extract target positions
                 buf = connection.recv(4)
                 if not buf:
@@ -116,15 +117,28 @@ class etherCATSocketServer:
                 remainingLength -= len(buf)
                 logging.debug(f"Received target position: {targetPosition}, remaining length: {remainingLength}")
 
+            # If no slave_ids are provided, assume all slaves should move
+            if slave_ids is None:
+                slave_ids = range(len(targetPositions))  # Default to moving all slaves
+
+            # Check that the number of positions matches the number of slaves (or slave_ids)
+            if len(targetPositions) != len(slave_ids):
+                raise ValueError("The number of target positions must match the number of slave IDs provided.")
+
             # Handle the movement process
             self.softMaster.enablePDO()
             self.softMaster.sendPDO()
             self.softMaster.receivePDO()
             self.softMaster.changeDeviceStatesPDO(StatuswordStates.OPERATION_ENABLED)
-            self.softMaster.goToPositions(targetPositions, printActualPosition=True)
+
+            # Use slave_ids to assign target positions to specific slaves
+            self.softMaster.goToPositions(targetPositions, slave_ids=slave_ids, printActualPosition=True)
+
             self.softMaster.changeDeviceStatesPDO(StatuswordStates.QUICK_STOP_ACTIVE)
             self.softMaster.disablePDO()
+
             logging.info("Done moving")
+
         except Exception as e:
             logging.error(f"Error in PPMPDO: {e}")
 

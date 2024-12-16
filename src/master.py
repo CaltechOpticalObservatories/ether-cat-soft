@@ -294,35 +294,47 @@ class master:
                 homing = False
                 break
 
-    def goToPositions(self, positions: list[int], profileAcceleration=10000, profileDeceleration=10000, profileVelocity=1000, blocking=True, printActualPosition=False):
+    def goToPositions(self, positions: list[int], profileAcceleration=10000, profileDeceleration=10000, profileVelocity=1000, blocking=True, printActualPosition=False, slave_ids=None):
         """Send slaves to the given positions."""
+        
+        # Ensure the network is in operational mode
         if not self.assertStatuswordStatePDO(StatuswordStates.OPERATION_ENABLED):
             self.changeDeviceStatesPDO(StatuswordStates.OPERATION_ENABLED)
 
         self.changeOperatingMode(operatingModes.PROFILE_POSITION_MODE)
 
-        # Put the start PPM motion controlword along with the target position/velocity/acceleration/deceleration in all slave buffers
-        for slave, position in zip(self.slaves, positions):
-            data = slave.RxData
-            data[slave._controlwordPDOIndex] = 0b01111
-            data[1] = position
-            data[2] = profileAcceleration
-            data[3] = profileDeceleration
-            data[4] = profileVelocity
-            slave.createPDOMessage(data)
+        # If no slave_ids are provided, assume all slaves get the same position
+        if slave_ids is None:
+            slave_ids = range(len(self.slaves))  # All slaves get assigned a position
 
-        self.sendPDO()
+        # Ensure we have enough positions for the number of slaves (or vice versa)
+        if len(positions) != len(slave_ids):
+            raise ValueError("The number of positions must match the number of slave IDs provided.")
+
+        # Put the start PPM motion controlword along with the target position/velocity/acceleration/deceleration in all slave buffers
+        for slave_id, position in zip(slave_ids, positions):
+            slave = self.slaves[slave_id]  # Get the slave by ID
+            data = slave.RxData
+            data[slave._controlwordPDOIndex] = 0b01111  # Control word to start movement
+            data[1] = position  # Target position
+            data[2] = profileAcceleration  # Profile acceleration
+            data[3] = profileDeceleration  # Profile deceleration
+            data[4] = profileVelocity  # Profile velocity
+            slave.createPDOMessage(data)  # Create PDO message for this slave
+
+        self.sendPDO()  # Send PDOs to slaves
         self.receivePDO()
 
-        # Remove the start PPM motion controlword from all slave buffers (neccessary to avoid faults)
+        # Remove the start PPM motion controlword from all slave buffers (necessary to avoid faults)
         for slave in self.slaves:
             data = slave.RxData
-            data[slave._controlwordPDOIndex] = 0b11111
+            data[slave._controlwordPDOIndex] = 0b11111  # Stop motion command
             slave.createPDOMessage(data)
-        
+
         self.sendPDO()
         self.receivePDO()
 
+        # If blocking, wait until all slaves have reached their target positions
         if blocking:
             moving = True
 
@@ -331,8 +343,7 @@ class master:
                 for slave in self.slaves:
                     print(f"Slave {slave.node}", end='  |  ')
 
-
-            # Extra sends and recieves to clear the buffer of old target reached statuswords
+            # Clear old statuswords to avoid false 'Target reached' signals
             self.sendPDO()
             self.receivePDO()
 
@@ -343,21 +354,20 @@ class master:
                 self.sendPDO()
                 self.receivePDO()
 
-
                 oneSlaveMoving = False
                 for slave in self.slaves:
-
                     # Print the actual position if asked
                     if printActualPosition:
                         print(slave.PDOInput[1], end='  |  ')
 
                     statusword = slave.PDOInput[slave._statuswordPDOIndex]
-                    if statusword & (1 << 10) != 1 << 10:
+                    if statusword & (1 << 10) != 1 << 10:  # Checking if the target position is reached
                         oneSlaveMoving = True
 
                 if printActualPosition:
                     print('')
-                                
+
+                # If no slave is moving anymore, we are done
                 if not oneSlaveMoving:
                     moving = False
                     break
