@@ -349,7 +349,7 @@ class master:
             if slave is None:
                 raise ValueError(f"Slave with node {slave_node} not found.")
             # Print information about the slave and its target position
-            print(f"Moving Slave {slave.node} to position {position} (Node: {slave.name})")
+            print(f"Moving Slave {slave.node} to position {position}")
 
             # Prepare the data for the slave
             data = slave.RxData
