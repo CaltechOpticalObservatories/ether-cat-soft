@@ -92,23 +92,34 @@ def main():
 
     commands = Commands(args.host, args.port)
 
+    # Sending PPM PDO message to a specific slave or node
     if args.send_ppmpdo is not None:
-        print(f"Sending PPM PDO message to position {args.send_ppmpdo}")
-        commands.send_ppmpdo_message(args.send_ppmpdo)
+        if args.slave_ids:
+            for slave_id in args.slave_ids:
+                print(f"Sending PPM PDO message to slave {slave_id} with target position {args.send_ppmpdo}")
+                commands.send_ppmpdo_message(args.send_ppmpdo, slave_id)
+        else:
+            print(f"Sending PPM PDO message to all slaves with target position {args.send_ppmpdo}")
+            commands.send_ppmpdo_message(args.send_ppmpdo)
 
+    # Sending Homing PDO message
     if args.send_homingpdo:
         print("Sending Homing PDO message")
         commands.send_homingpdo_message()
 
+    # Sending multiple PPM PDO messages
     if args.send_multiple_ppmpdo:
-        # Ensure the number of positions matches the number of slave IDs
-        slave_ids = args.slave_ids if args.slave_ids else range(len(args.send_multiple_ppmpdo))
-        if len(args.send_multiple_ppmpdo) != len(slave_ids):
-            print("Error: The number of target positions must match the number of slave IDs.")
+        if args.slave_ids:
+            if len(args.send_multiple_ppmpdo) != len(args.slave_ids):
+                print("Error: The number of target positions must match the number of slave IDs.")
+            else:
+                print(f"Sending multiple PPM PDO messages with positions: {args.send_multiple_ppmpdo} and slave IDs: {args.slave_ids}")
+                commands.send_multiple_ppmpdo_messages(args.send_multiple_ppmpdo, args.slave_ids, args.wait_time)
         else:
-            print(f"Sending multiple PPM PDO messages with positions: {args.send_multiple_ppmpdo} and slave IDs: {slave_ids}")
-            commands.send_multiple_ppmpdo_messages(args.send_multiple_ppmpdo, slave_ids, args.wait_time)
+            print(f"Sending multiple PPM PDO messages to all slaves with positions: {args.send_multiple_ppmpdo}")
+            commands.send_multiple_ppmpdo_messages(args.send_multiple_ppmpdo)
 
+    # Retrieving slave info
     if args.get_slaves_info:
         print("Fetching slaves information:")
         commands.get_slaves_info()
