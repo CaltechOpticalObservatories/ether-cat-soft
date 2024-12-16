@@ -64,6 +64,22 @@ class master:
         for slave in self.slaves:
             slave.initializePDOVars()
             slave.createPDOMessage([0] * len(slave.currentRxPDOMap))
+    
+    def getSlavesInfo(self):
+        """Return a list of dictionaries containing information about each slave."""
+        slave_info = []
+        
+        for slave in self.slaves:
+            slave_data = {
+                "node": slave.node,
+                "state": slave.state,
+                "objectDictionary": slave.objectDictionary,
+                "currentRxPDOMap": slave.currentRxPDOMap,
+                "currentTxPDOMap": slave.currentTxPDOMap,
+            }
+            slave_info.append(slave_data)
+
+        return slave_info
 
     ### State Methods  SDO ###
     def assertNetworkWideState(self, state: int) -> bool:
@@ -423,6 +439,21 @@ class slave:
                     self.objectDictionary.PHYSICAL_OUTPUTS]
         self.PPMTx = [self.objectDictionary.STATUSWORD, self.objectDictionary.POSITION_ACTUAL_VALUE, self.objectDictionary.VELOCITY_ACTUAL_VALUE, 
                       self.objectDictionary.FOLLOWING_ERROR_ACTUAL_VALUE, self.objectDictionary.MODES_OF_OPERATION_DISPLAY, self.objectDictionary.DIGITAL_INPUTS]
+
+    def __repr__(self):
+        """String representation of the slave."""
+        return f"Slave(node={self.node}, state={self.state}, objectDictionary={self.objectDictionary})"
+
+    # Example method to get slave-specific info
+    def getInfo(self):
+        """Returns key information about this slave."""
+        return {
+            "node": self.node,
+            "state": self.state,
+            "objectDictionary": self.objectDictionary,
+            "currentRxPDOMap": self.currentRxPDOMap,
+            "currentTxPDOMap": self.currentTxPDOMap,
+        }
 
     ### State methods ###
     def assertNetworkState(self, state: int) -> bool:

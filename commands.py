@@ -66,6 +66,17 @@ class Commands:
         except Exception as e:
             print(f"Error sending message: {e}")
 
+    def get_slaves_info(self):
+        """Send a request to the server to fetch slave information."""
+        try:
+            # Send a specific request to the server for slave information
+            request_message = struct.pack('<H', 5)  # For example: message length (5 bytes)
+            request_message += struct.pack('<B', 0x02)  # Action Type (e.g., 0x02 = Get Slave Info)
+            self._send_message(request_message)
+
+        except Exception as e:
+            print(f"Error requesting slave info: {e}")
+
 def main():
     parser = argparse.ArgumentParser(description="Send commands to the server.")
     parser.add_argument('host', type=str, help='Server host IP address')
@@ -75,6 +86,7 @@ def main():
     parser.add_argument('--send-multiple-ppmpdo', nargs='+', type=int, metavar='POSITION', help='Send multiple PPM PDO messages with target positions')
     parser.add_argument('--slave-ids', nargs='+', type=int, metavar='SLAVE_ID', help='List of slave IDs to send PPM PDO messages to')
     parser.add_argument('--wait-time', type=float, default=1, help='Wait time (in seconds) between sending messages')
+    parser.add_argument('--get-slaves-info', action='store_true', help='Retrieve and print information about slaves')
 
     args = parser.parse_args()
 
@@ -96,6 +108,10 @@ def main():
         else:
             print(f"Sending multiple PPM PDO messages with positions: {args.send_multiple_ppmpdo} and slave IDs: {slave_ids}")
             commands.send_multiple_ppmpdo_messages(args.send_multiple_ppmpdo, slave_ids, args.wait_time)
+
+    if args.get_slaves_info:
+        print("Fetching slaves information:")
+        commands.get_slaves_info()
 
 if __name__ == '__main__':
     main()
