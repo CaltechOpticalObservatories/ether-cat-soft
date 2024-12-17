@@ -48,7 +48,7 @@ class Commands:
         for idx, (target_position, slave_id) in enumerate(zip(target_positions, slave_ids)):
             print(f"Moving slave {slave_id} to position {target_position}")
             self.send_ppmpdo_message(target_position, slave_id)
-            time.sleep(wait_time)  # Wait for specified time
+        time.sleep(wait_time)  # Wait for specified time
 
     def _send_message(self, message):
         """Send a message to the server and optionally receive a response."""
