@@ -64,6 +64,31 @@ class master:
         for slave in self.slaves:
             slave.initializePDOVars()
             slave.createPDOMessage([0] * len(slave.currentRxPDOMap))
+    
+    def getSlavesInfo(self):
+        """Return a list of dictionaries containing information about each slave."""
+        slave_info = []
+        
+        for slave in self.slaves:
+            slave_data = {
+                "node": slave.node,
+                "state": slave.state,
+                "objectDictionary": slave.objectDictionary,
+                "currentRxPDOMap": slave.currentRxPDOMap,
+                "currentTxPDOMap": slave.currentTxPDOMap,
+            }
+            slave_info.append(slave_data)
+        
+        print("Slave Information:")
+        for slave_data in slave_info:
+            print(f"Node: {slave_data['node']}")
+            print(f"  State: {slave_data['state']}")
+            print(f"  Object Dictionary: {slave_data['objectDictionary']}")
+            print(f"  Current Rx PDO Map: {slave_data['currentRxPDOMap']}")
+            print(f"  Current Tx PDO Map: {slave_data['currentTxPDOMap']}")
+            print("-" * 40)
+
+        return slave_info
 
     ### State Methods  SDO ###
     def assertNetworkWideState(self, state: int) -> bool:
@@ -101,6 +126,13 @@ class master:
     def setCollectiveDeviceState(self, state: int | str):
         for slave in self.slaves:
             slave.setDeviceState(state)
+    
+    def get_slave_by_node(self, node_id):
+        """Return the slave object corresponding to the given node ID."""
+        for slave in self.slaves:
+            if slave.node == node_id:
+                return slave
+        return None  # Return None if no slave with the given node ID is found
 
     ### PDO Methods ###
     """The PDO methods assume that all slaves are in the same state and that the PDOS all have the same base configuration, or at least that differences
@@ -294,35 +326,53 @@ class master:
                 homing = False
                 break
 
-    def goToPositions(self, positions: list[int], profileAcceleration=10000, profileDeceleration=10000, profileVelocity=1000, blocking=True, printActualPosition=False):
-        """Send slaves to the given positions."""
+    def goToPositions(self, positions: list[int], profileAcceleration=10000, profileDeceleration=10000, profileVelocity=1000, blocking=True, printActualPosition=False, slave_ids=None):
+        """Send slaves to the given positions based on their node IDs."""
+        
+        # Ensure the network is in operational mode
         if not self.assertStatuswordStatePDO(StatuswordStates.OPERATION_ENABLED):
             self.changeDeviceStatesPDO(StatuswordStates.OPERATION_ENABLED)
 
         self.changeOperatingMode(operatingModes.PROFILE_POSITION_MODE)
 
-        # Put the start PPM motion controlword along with the target position/velocity/acceleration/deceleration in all slave buffers
-        for slave, position in zip(self.slaves, positions):
-            data = slave.RxData
-            data[slave._controlwordPDOIndex] = 0b01111
-            data[1] = position
-            data[2] = profileAcceleration
-            data[3] = profileDeceleration
-            data[4] = profileVelocity
-            slave.createPDOMessage(data)
+        # If no slave_ids are provided, assume all slaves get the same position
+        if slave_ids is None:
+            slave_ids = [slave.node for slave in self.slaves]  # Use slave node IDs
 
-        self.sendPDO()
+        # Ensure we have enough positions for the number of slaves (or vice versa)
+        if len(positions) != len(slave_ids):
+            raise ValueError("The number of positions must match the number of slave IDs provided.")
+
+        # Map slave node ID to target position
+        for slave_node, position in zip(slave_ids, positions):
+            slave = self.get_slave_by_node(slave_node)  # Get the slave by its node ID
+            if slave is None:
+                raise ValueError(f"Slave with node {slave_node} not found.")
+            # Print information about the slave and its target position
+            print(f"Moving Slave {slave.node} to position {position}")
+
+            # Prepare the data for the slave
+            data = slave.RxData
+            data[slave._controlwordPDOIndex] = 0b01111  # Control word to start movement
+            data[1] = position  # Target position
+            data[2] = profileAcceleration  # Profile acceleration
+            data[3] = profileDeceleration  # Profile deceleration
+            data[4] = profileVelocity  # Profile velocity
+            slave.createPDOMessage(data)  # Create PDO message for this slave
+
+        self.sendPDO()  # Send PDOs to slaves
         self.receivePDO()
 
-        # Remove the start PPM motion controlword from all slave buffers (neccessary to avoid faults)
+        # Remove the start PPM motion controlword from all slave buffers (necessary to avoid faults)
         for slave in self.slaves:
             data = slave.RxData
-            data[slave._controlwordPDOIndex] = 0b11111
+            data[slave._controlwordPDOIndex] = 0b11111  # Stop motion command
             slave.createPDOMessage(data)
-        
+
         self.sendPDO()
         self.receivePDO()
 
+        # If blocking, wait until all slaves have reached their target positions
         if blocking:
             moving = True
 
@@ -331,8 +381,7 @@ class master:
                 for slave in self.slaves:
                     print(f"Slave {slave.node}", end='  |  ')
 
-
-            # Extra sends and recieves to clear the buffer of old target reached statuswords
+            # Clear old statuswords to avoid false 'Target reached' signals
             self.sendPDO()
             self.receivePDO()
 
@@ -343,24 +392,24 @@ class master:
                 self.sendPDO()
                 self.receivePDO()
 
-
                 oneSlaveMoving = False
                 for slave in self.slaves:
-
                     # Print the actual position if asked
                     if printActualPosition:
                         print(slave.PDOInput[1], end='  |  ')
 
                     statusword = slave.PDOInput[slave._statuswordPDOIndex]
-                    if statusword & (1 << 10) != 1 << 10:
+                    if statusword & (1 << 10) != 1 << 10:  # Checking if the target position is reached
                         oneSlaveMoving = True
 
                 if printActualPosition:
                     print('')
-                                
+
+                # If no slave is moving anymore, we are done
                 if not oneSlaveMoving:
                     moving = False
                     break
+
 
     def __del__(self, checkErrorRegisters=True):
 
@@ -413,6 +462,21 @@ class slave:
                     self.objectDictionary.PHYSICAL_OUTPUTS]
         self.PPMTx = [self.objectDictionary.STATUSWORD, self.objectDictionary.POSITION_ACTUAL_VALUE, self.objectDictionary.VELOCITY_ACTUAL_VALUE, 
                       self.objectDictionary.FOLLOWING_ERROR_ACTUAL_VALUE, self.objectDictionary.MODES_OF_OPERATION_DISPLAY, self.objectDictionary.DIGITAL_INPUTS]
+
+    def __repr__(self):
+        """String representation of the slave."""
+        return f"Slave(node={self.node}, state={self.state}, objectDictionary={self.objectDictionary})"
+
+    # Example method to get slave-specific info
+    def getInfo(self):
+        """Returns key information about this slave."""
+        return {
+            "node": self.node,
+            "state": self.state,
+            "objectDictionary": self.objectDictionary,
+            "currentRxPDOMap": self.currentRxPDOMap,
+            "currentTxPDOMap": self.currentTxPDOMap,
+        }
 
     ### State methods ###
     def assertNetworkState(self, state: int) -> bool:

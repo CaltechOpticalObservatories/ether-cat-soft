@@ -19,7 +19,7 @@ class pysoemHAL:
     ### Network interface methods ###
     def openNetworkInterface(self):
         """Opens the network interface with the given interface name."""
-        self.master.open(self.ifname) # pysoem doesn't return anything, so we can't check if it was successful
+        self.master.open(self.ifname)  # pysoem doesn't return anything, so we can't check if it was successful
 
     def closeNetworkInterface(self):
         """Closes the network interface."""
@@ -27,7 +27,7 @@ class pysoemHAL:
 
     ### SDO methods ###
     def SDORead(self, slaveInstance, address: tuple):
-
+        """Reads a Service Data Object (SDO) from a slave."""
         slave = self.master.slaves[slaveInstance.node]
 
         if isinstance(address, Enum):
@@ -43,6 +43,7 @@ class pysoemHAL:
         return response
     
     def SDOWrite(self, slaveInstance, address: tuple, data, completeAccess=False):
+        """Writes a Service Data Object (SDO) to a slave."""
         slave = self.master.slaves[slaveInstance.node]
 
         if isinstance(address, Enum):
@@ -53,11 +54,36 @@ class pysoemHAL:
 
     ### Slave configuration methods ###
     def initializeSlaves(self):
-        """"Creates slave objects for each slave and assigns them to self.slaves. Returns the number of slaves."""
+        """Creates slave objects for each slave and assigns them to self.slaves. Returns the number of slaves."""
         numSlaves = self.master.config_init()
         self.slaves = self.master.slaves
 
+        # Print out the slave information
+        self.print_slave_info()
+
         return numSlaves
+
+    def print_slave_info(self):
+        """Prints out detailed information for each slave."""
+        print("Slave Information:")
+        for slave in self.master.slaves:
+            # Inspect the available attributes using dir()
+            print("Available attributes:", dir(slave))  # Prints out all attributes of the slave
+
+            try:
+                # Access slave attributes
+                slave_id = getattr(slave, 'id', 'N/A')  # Use 'id' as the identifier
+                slave_name = getattr(slave, 'name', f"Slave {slave_id}")  # Default to 'Slave <id>' if 'name' doesn't exist
+                manufacturer = getattr(slave, 'man', 'N/A')  # Manufacturer ID
+                revision = getattr(slave, 'rev', 'N/A')  # Revision number
+                state = getattr(slave, 'state', 'N/A')  # Current state of the slave
+
+                # Print out the slave information
+                print(f"Slave ID: {slave_id} - Name: {slave_name}, Manufacturer ID: {manufacturer}, Revision: {revision}, State: {state}")
+            except Exception as e:
+                print(f"Error accessing slave attributes: {e}")
+
+        print("\nTotal slaves:", len(self.master.slaves))
     
     def addConfigurationFunc(self, slaveInstance, configFunc):
         """Adds a configuration function to the slave.
