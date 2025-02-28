@@ -2,6 +2,7 @@ import time
 import struct
 from typing import Callable
 import logging
+import functools
 
 from .helpers import *
 from .bus import EthercatBus
@@ -54,7 +55,12 @@ class EPOS4Bus:
             self.setCollectiveDeviceState(StatuswordStates.SWITCH_ON_DISABLED)
 
         for i, slave in enumerate(self.slaves):
-            self.HAL.addConfigurationFunc(slave, self.slaveConfigFuncs[i])
+            #TODO it seems that pyseom.Master().config_map uses this callback to configure the slaves, but there isnt
+            # much doc on what that callback's sig should be. From preexisting code it appears to be a slave id num
+            # Previously a global was used in the server which was gross. This at least allows it to be self contained.
+            # and, in thoery have multiple EPOS4Bus instances. I'd prefer to simply have the config callback accept a
+            # device, in this project's context an EPOS4Motor()
+            self.HAL.addConfigurationFunc(slave, functools.partial(self.slaveConfigFuncs[i], devs=self.slaves))
 
         self.HAL.configureSlaves()
         if not self.assertNetworkWideState(NetworkManagementStates.SAFE_OP):
@@ -414,6 +420,8 @@ class EPOS4Bus:
 
     def __del__(self, checkErrorRegisters=True):
 
+        #TODO this is almost certainly inappropriate for production,
+        # assumes bus is still active at instance destruction and has no exception handling.
         if checkErrorRegisters:
             for slave in self.slaves:
                 print("Slave one diagnostics:")
@@ -624,13 +632,12 @@ class EPOS4Motor:
         self.HAL.setWatchDog(self, timeout_ms)
 
 
-
-def EPOS4MicroTRB_12CC_Config(dev: EPOS4Motor):
+def EPOS4MicroTRB_12CC_Config(slaveNum:int, slaves: list[EPOS4Motor]):
     """ Configures an EPOS4 Micro TRB 12CC device """
-    # global EPOS4MicroMaster
-
-    # dev = EPOS4MicroMaster.slaves[slaveNum]
+    #TODO see TODO note in EPOS4Bus.configureSlaves()
+    dev = slaves[slaveNum]
     logging.debug(f"Configuring device {dev} (EPOS4 Micro 24/5)")
+
 
     # Define the Process Data Objects for PPM (Rx and Tx)
     PPMRx = [
@@ -671,6 +678,7 @@ def EPOS4MicroTRB_12CC_Config(dev: EPOS4Motor):
     dev.currentTxPDOMap = PPMTx
 
     # Configure Digital Inputs (example)
+    #TODO these write fucntions seem to expect a tuple not an Enum
     dev.SDOWrite(dev.objectDictionary.DIGITAL_INPUT_CONFIGURATION_DGIN_1, 255)
     dev.SDOWrite(dev.objectDictionary.DIGITAL_INPUT_CONFIGURATION_DGIN_2, 1)
     dev.SDOWrite(dev.objectDictionary.DIGITAL_INPUT_CONFIGURATION_DGIN_1, 0)
