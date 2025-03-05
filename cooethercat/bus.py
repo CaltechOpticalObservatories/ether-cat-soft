@@ -1,6 +1,9 @@
+from collections import OrderedDict
+
 import pysoem
 import struct
 from enum import Enum
+from logging import getLogger
 from .helpers import STATUSWORD_STATE_BITMASK
 
 class EthercatBus:
@@ -47,46 +50,39 @@ class EthercatBus:
         slave.sdo_write(index, subIndex, struct.pack('<' + packFormat, data), ca=completeAccess)
 
     ### Slave configuration methods ###
-    def initializeSlaves(self):
+    def initialize_slaves(self):
         """Creates slave objects for each slave and assigns them to self.slaves. Returns the number of slaves."""
         numSlaves = self.pysoem_master.config_init()
         self.slaves = self.pysoem_master.slaves
-
-        # Print out the slave information
-        self.print_slave_info()
-
+        getLogger(__name__).info(self.slave_info(as_string=True))
         return numSlaves
 
-    def print_slave_info(self):
-        """Prints out detailed information for each slave."""
-        print("Slave Information:")
-        for slave in self.pysoem_master.slaves:
+    def slave_info(self, as_string=False):
+        """Gathers detailed information for each slave."""
+
+        keys = ('id', 'name', 'manufacturer', 'revision', 'state')
+        attribs = ('id', 'name', 'man', 'rev', 'state')
+        defaults = ('N/A', '""', 'N/A', 'N/A', 'N/A')
+        data = OrderedDict()
+        for slave_ndx, slave in enumerate(self.pysoem_master.slaves):
             # Inspect the available attributes using dir()
-            print("Available attributes:", dir(slave))  # Prints out all attributes of the slave
+            data[slave_ndx] = OrderedDict()
+            data[slave_ndx]['attributes'] = dir(slave)
 
-            try:
-                # Access slave attributes
-                slave_id = getattr(slave, 'id', 'N/A')  # Use 'id' as the identifier
-                slave_name = getattr(slave, 'name', f"Slave {slave_id}")  # Default to 'Slave <id>' if 'name' doesn't exist
-                manufacturer = getattr(slave, 'man', 'N/A')  # Manufacturer ID
-                revision = getattr(slave, 'rev', 'N/A')  # Revision number
-                state = getattr(slave, 'state', 'N/A')  # Current state of the slave
+            for key, attrib, default in zip(keys, attribs, defaults):
+                try:
+                    data[slave_ndx][key] = getattr(slave, attrib, default)  # Revision number
+                except Exception as e:
+                    data[slave_ndx][key] = f"<Error {e} for '{x}' attribute>"
 
-                # Print out the slave information
-                print(f"Slave ID: {slave_id} - Name: {slave_name}, Manufacturer ID: {manufacturer}, Revision: {revision}, State: {state}")
-            except Exception as e:
-                print(f"Error accessing slave attributes: {e}")
+        if as_string:
+            fmt = ("Available attributes: {attributes}\n"
+                   "ID: {id} - Name: {name}, Manufacturer ID: {manufacturer}, Revision: {revision}, State: {state}")
+            string = ("Slave Information:"+
+             '\n----\n'.join( [fmt.format(**rec) for rec in data.values()])+
+             '\nTotal slaves: {len(self.pysoem_master.slaves)}')
 
-        print("\nTotal slaves:", len(self.pysoem_master.slaves))
-
-    def addConfigurationFunc(self, slaveInstance, configFunc):
-        """Adds a configuration function to the slave.
-        Inputs:
-            slave: high level master.py.slave instance
-            configFunc: function
-                The function to be run on the slave.
-        """
-        self.pysoem_master.slaves[slaveInstance.node].config_func = configFunc
+        return string if as_string else data
 
     def configureSlaves(self):
         """Configures the slaves"""
