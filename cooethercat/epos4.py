@@ -10,11 +10,15 @@ from .bus import EthercatBus
 
 class EPOS4Bus:
 
-    def __init__(self, networkInterfaceName: str, slaveConfigFuncs: list[Callable] = None) -> None:
-
+    def __init__(self, networkInterfaceName: str) -> None:
+        """
+        Inputs:
+            configFuncs: list of functions or dictionary of functions
+                The functions will be run in the 'Pre-Operational' NMT state and the 'Switch on disabled'
+                device state.
+        """
         self.HAL = EthercatBus(networkInterfaceName)
         self.numSlaves = 0
-        self.slaveConfigFuncs = slaveConfigFuncs
         self.slaves: list[EPOS4Motor] = None
         self.PDOCycleTime = 0.010 # 10ms, official sync manager 2 cycle time is 2ms but I've run into issues
 
@@ -26,27 +30,22 @@ class EPOS4Bus:
         self.HAL.closeNetworkInterface()
 
     ### Slave configuration methods ###
-    #TODO this makes this whole HAL thing kind moot. No introspection
-    def initializeSlaves(self):
+    def initialize_slaves(self, id_type_map=None):
         """Creates slave objects in the HAL and in this instance. Sends some basic information to the 
-        actual hardware to do this."""
-        self.numSlaves = self.HAL.initializeSlaves()
+        actual hardware to do this.
+
+        pass a dictionary of bus id types if passed no default will be used. if None EPOS4Motor will be used
+
+        #TODO VITAL! verify that the index a feature of the device and not the point on the bus
+        """
+        self.numSlaves = self.HAL.initialize_slaves()
         
         self.slaves = []
         for i, slaveInst in enumerate(self.HAL.slaves):
-            self.slaves += [EPOS4Motor(self, i, slaveInst.name)]
+            self.slaves += [id_type_map[i](self, i, slaveInst.name)]
 
-    def configureSlaves(self):
-        """Configure slaves with specific constants, mode and PDO mappings.
-        Inputs:
-            configFuncs: list of functions or dictionary of functions
-                The functions will be run in the 'Pre-Operational' NMT state and the 'Switch on disabled'
-                device state. 
-            """
-        if self.slaveConfigFuncs == None:
-            print("WARN: No slave configuration functions provided. Pass them to master on initialization.")
-            self.HAL.configureSlaves()
-            return
+    def configure_slaves(self):
+        """Configure slaves with specific constants, mode and PDO mappings."""
 
         if not self.assertNetworkWideState(NetworkManagementStates.PRE_OP):
             self.setNetworkWideState(NetworkManagementStates.PRE_OP)
@@ -54,15 +53,8 @@ class EPOS4Bus:
         if not self.assertCollectiveDeviceState(StatuswordStates.SWITCH_ON_DISABLED):
             self.setCollectiveDeviceState(StatuswordStates.SWITCH_ON_DISABLED)
 
-        for i, slave in enumerate(self.slaves):
-            #TODO it seems that pyseom.Master().config_map uses this callback to configure the slaves, but there isnt
-            # much doc on what that callback's sig should be. From preexisting code it appears to be a slave id num
-            # Previously a global was used in the server which was gross. This at least allows it to be self contained.
-            # and, in thoery have multiple EPOS4Bus instances. I'd prefer to simply have the config callback accept a
-            # device, in this project's context an EPOS4Motor()
-            self.HAL.addConfigurationFunc(slave, functools.partial(self.slaveConfigFuncs[i], devs=self.slaves))
-
         self.HAL.configureSlaves()
+
         if not self.assertNetworkWideState(NetworkManagementStates.SAFE_OP):
             raise RuntimeError("Failed to transition to Safe-OP state after configuring slaves.")
         
@@ -70,7 +62,7 @@ class EPOS4Bus:
             slave.initializePDOVars()
             slave.createPDOMessage([0] * len(slave.currentRxPDOMap))
     
-    def getSlavesInfo(self):
+    def get_slaves_info(self, as_string=False)-> str | list[dict]:
         """Return a list of dictionaries containing information about each slave."""
         slave_info = []
         
@@ -83,17 +75,18 @@ class EPOS4Bus:
                 "currentTxPDOMap": slave.currentTxPDOMap,
             }
             slave_info.append(slave_data)
-        
-        print("Slave Information:")
-        for slave_data in slave_info:
-            print(f"Node: {slave_data['node']}")
-            print(f"  State: {slave_data['state']}")
-            print(f"  Object Dictionary: {slave_data['objectDictionary']}")
-            print(f"  Current Rx PDO Map: {slave_data['currentRxPDOMap']}")
-            print(f"  Current Tx PDO Map: {slave_data['currentTxPDOMap']}")
-            print("-" * 40)
 
-        return slave_info
+        record = ("Node: {node}\n" +
+                  "  State: {state}\n" +
+                  "  Object Dictionary: {objectDictionary}\n" +
+                  "  Current Rx PDO Map: {currentRxPDOMap}\n" +
+                  "  Current Tx PDO Map: {currentTxPDOMap}\n" +
+                  ("-" * 40))
+
+        if as_string:
+            return "Slave Information:\n" + '\n'.join([record.format_map(slave_data) for slave_data in slave_info])
+        else:
+            return slave_info
 
     ### State Methods  SDO ###
     def assertNetworkWideState(self, state: Enum| int) -> bool:
@@ -174,17 +167,6 @@ class EPOS4Bus:
         if time.perf_counter_ns() - start > self.PDOCycleTime * 1e9:
             # TODO This explicit sleep makes this block the current thread, consider reworking
             time.sleep(self.PDOCycleTime - (time.perf_counter_ns() - start) * 1e-9)
-
-    def reconfigurePDO(self):
-        """Set new config funcs by altering the function handles in master.slaveConfigFuncs then call this function.
-        
-        Ideally, we wouldn't need to essentially 'reboot' our whole network, but pysoem's reconfig() slave method doesn't
-        seem to work and puts the slaves into fault. This function could use some updating in the future."""
-
-        self.closeNetworkInterface()
-        self.openNetworkInterface()
-        self.initializeSlaves()
-        self.configureSlaves()
  
     def waitForStatePDO(self, desiredState: StatuswordStates):
         """Wait until all slaves are in the desired state. This function will block until the desired state is reached."""
@@ -370,7 +352,7 @@ class EPOS4Bus:
         self.sendPDO()  # Send PDOs to slaves
         self.receivePDO()
 
-        # Remove the start PPM motion controlword from all slave buffers (necessary to avoid faults)
+        # Remove the start PPM motion control word from all slave buffers (necessary to avoid faults)
         for slave in self.slaves:
             data = slave.RxData
             data[slave._controlwordPDOIndex] = 0b11111  # Stop motion command
@@ -539,7 +521,7 @@ class EPOS4Motor:
 
         return self.HAL.SDORead(self, address)
 
-    def SDOWrite(self, address: tuple, value: int, completeAccess=False):
+    def SDOWrite(self, address: Enum| tuple, value: int, completeAccess=False):
         self.HAL.SDOWrite(self, address, value, completeAccess)
 
     ## PDO Methods ##
