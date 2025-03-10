@@ -15,7 +15,7 @@ authors = [
   {name = "Jeb Bailey", email = "your.email@example.com"},
 ]
 maintainers = [
-  {name = "Caltech Optical Observatories", email = ""}
+  {name = "Caltech Optical Observatories", email = "your.email@example.com"}
 ]
 description = "A python ethercat library, presently principlally for the Maxon EPOS4"
 readme = "README.md" 
@@ -40,7 +40,4 @@ Repository = "https://github.com/CaltechOpticalObservatories/coo-ethercat"
 [project.optional-dependencies]
 # Optional dependencies that can be installed with extra tags, like "dev".
 dev = [
-  "pytest", 
-  "black",
-  "flake8"
 ]
