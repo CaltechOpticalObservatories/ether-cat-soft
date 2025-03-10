@@ -2,6 +2,9 @@ from enum import Enum
 
 STATUSWORD_STATE_BITMASK = 0b1101111
 
+class IncorrectState(Exception):
+    pass
+
 class StatuswordStates(Enum):
     NOT_READY_TO_SWITCH_ON = 0
     SWITCH_ON_DISABLED = 0b1000000
@@ -48,7 +51,7 @@ EPOS4_STATE_MACHINE = {
     'SWITCHED_ON':                {'READY_TO_SWITCH_ON': StateCommands.SHUTDOWN, 'OPERATION_ENABLED': StateCommands.ENABLE_OPERATION, 'SWITCH_ON_DISABLED': StateCommands.DISABLE_VOLTAGE},
     'OPERATION_ENABLED':          {'SWITCHED_ON': StateCommands.DISABLE_OPERATION, 'QUICK_STOP_ACTIVE': StateCommands.QUICK_STOP, 'READY_TO_SWITCH_ON': StateCommands.SHUTDOWN, 'SWITCH_ON_DISABLED': StateCommands.DISABLE_VOLTAGE},
     'QUICK_STOP_ACTIVE':          {'OPERATION_ENABLED': StateCommands.ENABLE_OPERATION, 'SWITCH_ON_DISABLED': StateCommands.DISABLE_VOLTAGE},
-    'FAULT_REACTION_ACTIVE':       {'FAULT': StateCommands.FAULT_RESET},
+    'FAULT_REACTION_ACTIVE':      {'FAULT': StateCommands.FAULT_RESET},
     'FAULT':                      {'SWITCH_ON_DISABLED': StateCommands.FAULT_RESET}
     }
 
@@ -152,6 +155,8 @@ def getInfo(identifier: str | int, ObjDict) -> None:
 
 def getStatuswordState(statusword: int) -> str:
     """Returns the current state name of the statusword."""
+    #TODO this whole statusword and enum stuff needs a rework, why are we ints in some places, strings in others and
+    # the enum in still others. thats the whole point of a type to handle that for you, sigh.
     if isinstance(statusword, tuple):
         statusword = statusword[0]
     if isinstance(statusword, Enum):

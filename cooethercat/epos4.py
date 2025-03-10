@@ -2,6 +2,7 @@ import time
 import struct
 from typing import Callable
 import logging
+from logging import getLogger
 import functools
 
 from .helpers import *
@@ -17,17 +18,17 @@ class EPOS4Bus:
                 The functions will be run in the 'Pre-Operational' NMT state and the 'Switch on disabled'
                 device state.
         """
-        self.HAL = EthercatBus(networkInterfaceName)
+        self._bus = EthercatBus(networkInterfaceName)
         self.numSlaves = 0
         self.slaves: list["EPOS4Motor"] = []
         self.PDOCycleTime = 0.010 # 10ms, official sync manager 2 cycle time is 2ms but I've run into issues
 
     ### Network interface methods ###
     def open(self):
-        self.HAL.open()
+        self._bus.open()
 
     def close(self):
-        self.HAL.close()
+        self._bus.close()
 
     ### Slave configuration methods ###
     def initialize_slaves(self, id_type_map=dict[int, "EPOS4Motor"]):
@@ -38,11 +39,12 @@ class EPOS4Bus:
 
         #TODO VITAL! verify that the index a feature of the device and not the point on the bus
         """
-        self.numSlaves = self.HAL.initialize_slaves()
+        self.numSlaves = self._bus.initialize_slaves()
         
         self.slaves = []
-        for i, slaveInst in enumerate(self.HAL.slaves):
+        for i, slaveInst in enumerate(self._bus.pysoem_master.slaves):
             self.slaves.append(id_type_map[i](self, i, slaveInst.name))
+            self._bus.pysoem_master.slaves[i].config_func=getattr(self.slaves[i],'config_func')
 
     def configure_slaves(self):
         """Configure slaves with specific constants, mode and PDO mappings."""
@@ -53,7 +55,7 @@ class EPOS4Bus:
         if not self.assertCollectiveDeviceState(StatuswordStates.SWITCH_ON_DISABLED):
             self.setCollectiveDeviceState(StatuswordStates.SWITCH_ON_DISABLED)
 
-        self.HAL.configureSlaves()
+        self._bus.configureSlaves()
 
         if not self.assertNetworkWideState(NetworkManagementStates.SAFE_OP):
             raise RuntimeError("Failed to transition to Safe-OP state after configuring slaves.")
@@ -67,17 +69,12 @@ class EPOS4Bus:
         slave_info = []
         
         for slave in self.slaves:
-            slave_data = {
-                "node": slave.node,
-                "state": slave.state,
-                "objectDictionary": slave.objectDictionary,
-                "currentRxPDOMap": slave.currentRxPDOMap,
-                "currentTxPDOMap": slave.currentTxPDOMap,
-            }
+            slave_data = slave.get_info()
             slave_info.append(slave_data)
 
-        record = ("Node: {node}\n" +
-                  "  State: {state}\n" +
+        record = ("  Node: {node}\n" +
+                  "  NetState: {networkState}\n" +
+                  "  DevState: {state}\n" +
                   "  Object Dictionary: {objectDictionary}\n" +
                   "  Current Rx PDO Map: {currentRxPDOMap}\n" +
                   "  Current Tx PDO Map: {currentTxPDOMap}\n" +
@@ -90,29 +87,21 @@ class EPOS4Bus:
 
     ### State Methods  SDO ###
     def assertNetworkWideState(self, state: Enum| int) -> bool:
-
-        if isinstance(state, Enum):
-            state = state.value
-    
-        return self.HAL.assertNetworkWideState(state)
+        state = state.value if isinstance(state, Enum) else state
+        return self._bus.assertNetworkWideState(state)
     
     def getNetworkWideState(self):
-        return self.HAL.getNetworkWideState()
+        return self._bus.getNetworkWideState()
     
     def setNetworkWideState(self, state: Enum| int):
-        if isinstance(state, Enum):
-            state = state.value
-        self.HAL.setNetworkWideState(state)
+        state = state.value if isinstance(state, Enum) else state
+        self._bus.setNetworkWideState(state)
     
     def assertCollectiveDeviceState(self, state: StatuswordStates | int) -> bool:
-        
-        if isinstance(state, Enum): # Handle the pythonic class and int type
-           state = state.value
-        
+        state = state.value if isinstance(state, Enum) else state
         for slave in self.slaves:
             if not slave.assert_device_state(state):
                 return False
-        
         return True
     
     def getCollectiveDeviceState(self):
@@ -135,32 +124,35 @@ class EPOS4Bus:
     ### PDO Methods ###
     """The PDO methods assume that all slaves are in the same state and that the PDOS all have the same base configuration, or at least that differences
     are handled at other abstraction levels"""
-    def enablePDO(self):
-        print("Enabling PDO")
-        self.HAL.setNetworkWideState(NetworkManagementStates.OPERATIONAL)
+    def enable_pdo(self):
+        getLogger(__name__).debug("Enabling PDO")
+        self.setNetworkWideState(NetworkManagementStates.OPERATIONAL)
 
         # Send PDO data to maintain the operational state
         for i in range(4): # Iterate 4 times to clear the three buffer sync managers
             self.sendPDO()
             self.receivePDO()
 
-        print("PDO Enabled")
-        return self.assertNetworkWideState(NetworkManagementStates.OPERATIONAL)
-    
-    def disablePDO(self):
+        if self.assertNetworkWideState(NetworkManagementStates.OPERATIONAL):
+            getLogger(__name__).debug("PDO Enabled")
+            return True
+        else:
+            getLogger(__name__).error("Failed to enable PDO")
+            return False
+
+    def disable_pdo(self):
         self.setNetworkWideState(NetworkManagementStates.SAFE_OP)
     
     def sendPDO(self):
-        self.HAL.sendProcessData()
+        self._bus.sendProcessData()
         #TODO This explicit sleep makes this block the current thread, consider reworking
         time.sleep(self.PDOCycleTime)
 
     def receivePDO(self):
-        self.HAL.receiveProcessData()
+        self._bus.receiveProcessData()
         start = time.perf_counter_ns()
         for slave in self.slaves:
             slave._fetch_pdo_data() # Put the low level HAL slave byte buffer into slave.PDOInput
-
             slave.PDOInput = struct.unpack('<' + slave.currentTxPDOPackFormat, slave.PDOInput)
         
         # Enforce the minimum PDO cycle time after performing all the above operations
@@ -173,30 +165,22 @@ class EPOS4Bus:
 
         print("Waiting for state")
 
-        self.sendPDO()
-        self.receivePDO()
-        self.sendPDO()
-        self.receivePDO()
-        self.sendPDO()
-        self.receivePDO()
-
-        waiting = True
-        while waiting:
+        for _ in range(3):
             self.sendPDO()
             self.receivePDO()
 
-            oneSlaveNotInState = False
-            for slave in self.slaves:
+        while True:
+            self.sendPDO()
+            self.receivePDO()
+
+            pending = False
+            for i, slave in enumerate(self.slaves):
                 if not assertStatuswordState(slave.PDOInput[slave._statuswordPDOIndex], desiredState):
-                    oneSlaveNotInState = True
-                    print(slave.PDOInput[slave._statuswordPDOIndex])
-                    print("One slave not in state")
-                    print(slave._statuswordPDOIndex)
+                    pending = True
+                    getLogger(__name__).debug(f"Slave {i} not in state {slave.PDOInput[slave._statuswordPDOIndex]} (ndx={slave._statuswordPDOIndex})")
                     break
             
-            if not oneSlaveNotInState:
-                print("All slaves in state")
-                waiting = False
+            if not pending:
                 break
 
     def assertStatuswordStatePDO(self, state: StatuswordStates):
@@ -213,12 +197,12 @@ class EPOS4Bus:
                 return False
         return True
 
-    def changeDeviceStatesPDO(self, desiredState: StatuswordStates):
+    def changeDeviceStatesPDO(self, desiredState: StatuswordStates, wait=True):
         """Change the device state of all slaves to the desired state. Will only work if all slaves are in the same start state."""
 
+        #TODO Doesn't this need to be done for all slaves (or at least some sort of interlink condition verified)
         self.receivePDO()
-        firstSlave = self.slaves[0]
-        statusword = firstSlave.PDOInput[firstSlave._statuswordPDOIndex]
+        statusword = self.slaves[0]._statusword
 
         if assertStatuswordState(statusword, StatuswordStates.NOT_READY_TO_SWITCH_ON):
             print("Slave needs time to auto switch states")
@@ -226,27 +210,29 @@ class EPOS4Bus:
                 self.sendPDO()
                 self.receivePDO()
 
-                statusword = firstSlave.PDOInput[firstSlave._statuswordPDOIndex]
+                statusword = self.slaves[0]._statusword
                 print(getStatuswordState(statusword), assertStatuswordState(statusword, StatuswordStates.NOT_READY_TO_SWITCH_ON), bin(statusword))
                 if not assertStatuswordState(statusword, StatuswordStates.NOT_READY_TO_SWITCH_ON):
                     print("Reached switch on disabled")
                     break
-        
+
         startingState = getStatuswordState(statusword)
         endState = getStatuswordState(desiredState)
 
         stateTransitionControlwords = getStateTransitions(startingState, endState)
-        print(stateTransitionControlwords)
+        getLogger(__name__).debug(f'State transition control word: {stateTransitionControlwords}')
 
         for controlword in stateTransitionControlwords:
             for slave in self.slaves:
-                slave.RxData[slave._controlwordPDOIndex] = controlword
-                print(slave.RxData)
+                assert slave._statusword == statusword, 'Foundational assumption of functional correctness failed.'
+                slave._set_controlword(controlword)
                 slave._create_pdo_message(slave.RxData)
-                self.sendPDO()
-                self.receivePDO()
 
-        self.waitForStatePDO(desiredState)
+        self.sendPDO()
+        self.receivePDO()
+
+        if wait:
+            self.waitForStatePDO(desiredState)
 
     def changeOperatingMode(self, operatingMode: int | OperatingModes):
         """Change the RxPDO output to switch the operating mode of the slave on the next master.SendPDO() call."""
@@ -315,7 +301,7 @@ class EPOS4Bus:
                 homing = False
                 break
 
-    def goToPositions(self, positions: list[int], profileAcceleration=10000, profileDeceleration=10000, profileVelocity=1000, blocking=True, printActualPosition=False, slave_ids=None):
+    def move_to(self, positions: list[int], acceleration=10000, deceleration=10000, speed=1000, blocking=True, verbose=False, slave_ids=None):
         """Send slaves to the given positions based on their node IDs."""
         
         # Ensure the network is in operational mode
@@ -338,15 +324,15 @@ class EPOS4Bus:
             if slave is None:
                 raise ValueError(f"Slave with node {slave_node} not found.")
             # Print information about the slave and its target position
-            print(f"Moving Slave {slave.node} to position {position}")
+            getLogger(__name__).info(f"Moving Slave {slave.node} to position {position}")
 
             # Prepare the data for the slave
             data = slave.RxData
             data[slave._controlwordPDOIndex] = 0b01111  # Control word to start movement
             data[1] = position  # Target position
-            data[2] = profileAcceleration  # Profile acceleration
-            data[3] = profileDeceleration  # Profile deceleration
-            data[4] = profileVelocity  # Profile velocity
+            data[2] = acceleration  # Profile acceleration
+            data[3] = deceleration  # Profile deceleration
+            data[4] = speed  # Profile velocity
             slave._create_pdo_message(data)  # Create PDO message for this slave
 
         self.sendPDO()  # Send PDOs to slaves
@@ -363,12 +349,11 @@ class EPOS4Bus:
 
         # If blocking, wait until all slaves have reached their target positions
         if blocking:
-            moving = True
 
-            if printActualPosition:
-                print("Actual positions:")
-                for slave in self.slaves:
-                    print(f"Slave {slave.node}", end='  |  ')
+            if verbose:
+                getLogger(__name__).info("Actual positions:")
+                string = '  |  '.join([f'Slave {slave.node}' for slave in self.slaves])
+                getLogger(__name__).info(string)
 
             # Clear old statuswords to avoid false 'Target reached' signals
             self.sendPDO()
@@ -377,26 +362,24 @@ class EPOS4Bus:
             self.sendPDO()
             self.receivePDO()
 
-            while moving:
+            while True:
                 self.sendPDO()
                 self.receivePDO()
 
-                oneSlaveMoving = False
+                moving = False
+                strings = []
                 for slave in self.slaves:
                     # Print the actual position if asked
-                    if printActualPosition:
-                        print(slave.PDOInput[1], end='  |  ')
+                    strings.append(f'{slave.PDOInput[1]}')
 
                     statusword = slave.PDOInput[slave._statuswordPDOIndex]
-                    if statusword & (1 << 10) != 1 << 10:  # Checking if the target position is reached
-                        oneSlaveMoving = True
+                    moving = moving or (statusword & (1 << 10) != 1 << 10)  # Checking if the target position is reached
 
-                if printActualPosition:
-                    print('')
+                if verbose:
+                    getLogger(__name__).info('  |  '.join(strings))
 
                 # If no slave is moving anymore, we are done
-                if not oneSlaveMoving:
-                    moving = False
+                if not moving:
                     break
 
 
@@ -407,15 +390,15 @@ class EPOS4Bus:
         if checkErrorRegisters:
             for slave in self.slaves:
                 print("Slave one diagnostics:")
-                resp = slave.sdo_read(slave.objectDictionary.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_1)
+                resp = slave._sdo_read(slave.objectDictionary.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_1)
                 print("Diagnosis message 1: ", resp)
-                resp = slave.sdo_read(slave.objectDictionary.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_2)
+                resp = slave._sdo_read(slave.objectDictionary.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_2)
                 print("Diagnosis message 2: ", resp)
-                resp = slave.sdo_read(slave.objectDictionary.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_3)
+                resp = slave._sdo_read(slave.objectDictionary.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_3)
                 print("Diagnosis message 3: ", resp)
-                resp = slave.sdo_read(slave.objectDictionary.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_4)
+                resp = slave._sdo_read(slave.objectDictionary.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_4)
                 print("Diagnosis message 4: ", resp)
-                resp = slave.sdo_read(slave.objectDictionary.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_5)
+                resp = slave._sdo_read(slave.objectDictionary.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_5)
                 print("Diagnosis message 5: ", resp)
 
         self.close()
@@ -434,9 +417,8 @@ class EPOS4Motor:
             - This object shouldn't be used directly, it should be created by the master class.
             - The object dictionary should be a string that corresponds to the object dictionary of the slave."""
 
-        self.HAL = master.HAL
+        self.HAL = master._bus
         self.node = node
-        self.state = None
         self.currentRxPDOMap = None
         self.currentRxPDOPackFormat = None
         self.currentTxPDOMap = None
@@ -457,7 +439,22 @@ class EPOS4Motor:
 
     def __repr__(self):
         """String representation of the slave."""
-        return f"Slave(node={self.node}, state={self.state}, objectDictionary={self.objectDictionary})"
+        return f"EPOS4Motor(masternode={self.node}, net_state={self._get_network_state()}, dev_state={self.get_device_state()}, objectDictionary={self.objectDictionary})"
+
+    @property
+    def _statusword(self):
+        return self.PDOInput[self._statuswordPDOIndex]
+
+    def _set_controlword(self, value: int):
+        self.RxData[self._controlwordPDOIndex] = value
+
+    # def _set_target_position(self, value: int):
+    #     self.RxData[self._controlwordPDOIndex] = 0b01111
+    #     self.RxData[1] = value
+    #
+    # def _set_profile_acceleration(self, value: int):
+    #     self.RxData[self._controlwordPDOIndex] = 0b01111
+    #     self.RxData[2] = value
 
     def identify(self, enable=True):
         """Enable or disable identification"""
@@ -468,7 +465,8 @@ class EPOS4Motor:
         """Returns key information about this slave."""
         return {
             "node": self.node,
-            "state": self.state,
+            "networkState": self._get_network_state(),
+            "state": self.get_device_state(),
             "objectDictionary": self.objectDictionary,
             "currentRxPDOMap": self.currentRxPDOMap,
             "currentTxPDOMap": self.currentTxPDOMap,

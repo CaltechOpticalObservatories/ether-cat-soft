@@ -62,7 +62,6 @@ class EthercatBus:
     def initialize_slaves(self):
         """Creates slave objects for each slave and assigns them to self.slaves. Returns the number of slaves."""
         numSlaves = self.pysoem_master.config_init()
-        self.slaves = self.pysoem_master.slaves
         getLogger(__name__).info(self.slave_info(as_string=True))
         return numSlaves
 
@@ -105,49 +104,32 @@ class EthercatBus:
             timeout: float
                 The timeout in milliseconds
         """
-
         self.pysoem_master.slaves[slaveInstance.node].set_watchdog('pdi', timeout)
         self.pysoem_master.slaves[slaveInstance.node].set_watchdog('processdata', timeout)
 
-        return 1
-
-        ### Network state methods ###
-
+    ### Network state methods ###
     # 1. Apply to all slaves
     def assertNetworkWideState(self, state: int) -> bool:
-
-        if self.pysoem_master.state_check(state) == state:
-            return True
-
-        return False
+        return self.pysoem_master.state_check(state) == state
 
     def getNetworkWideState(self):
         self.pysoem_master.read_state()  # Cursed abstraction by pysoem, slaves can't refresh their own state :(
         states = []
         for i, slave in enumerate(self.pysoem_master.slaves):
             states += [slave.state]
-
         return states
 
     def setNetworkWideState(self, state: Enum| int):
-
-        if isinstance(state, Enum):
-            state = state.value
-
+        state = state.value if isinstance(state, Enum) else state
         self.pysoem_master.state = state
         self.pysoem_master.write_state()
 
     # 2. Apply to individual slaves
     def assertNetworkState(self, slaveInstance, state: int) -> bool:
-        self.pysoem_master.read_state()
-        if self.pysoem_master.slaves[slaveInstance.node].state == state:
-            return True
-
-        return False
+        return self.getNetworkState(slaveInstance) == state
 
     def getNetworkState(self, slaveInstance):
         self.pysoem_master.read_state()  # Cursed, the slaves can't refresh their own state
-
         return self.pysoem_master.slaves[slaveInstance.node].state
 
     def setNetworkState(self, slaveInstance, state: int):
@@ -156,10 +138,7 @@ class EthercatBus:
 
     ### Device state methods ###
     def assertDeviceState(self, slaveInstance, state: Enum | int) -> bool:
-
-        if isinstance(state, Enum):  # Handle the pythonic class and int type
-            state = state.value
-
+        state = state.value if isinstance(state, Enum) else state
         statusword = self.SDORead(slaveInstance, slaveInstance.objectDictionary.STATUSWORD)
         maskedWord = statusword & STATUSWORD_STATE_BITMASK
         maskedWord = maskedWord & state
