@@ -19,18 +19,18 @@ class EPOS4Bus:
         """
         self.HAL = EthercatBus(networkInterfaceName)
         self.numSlaves = 0
-        self.slaves: list[EPOS4Motor] = None
+        self.slaves: list["EPOS4Motor"] = []
         self.PDOCycleTime = 0.010 # 10ms, official sync manager 2 cycle time is 2ms but I've run into issues
 
     ### Network interface methods ###
-    def openNetworkInterface(self):
-        self.HAL.openNetworkInterface()    
+    def open(self):
+        self.HAL.open()
 
-    def closeNetworkInterface(self):
-        self.HAL.closeNetworkInterface()
+    def close(self):
+        self.HAL.close()
 
     ### Slave configuration methods ###
-    def initialize_slaves(self, id_type_map=None):
+    def initialize_slaves(self, id_type_map=dict[int, "EPOS4Motor"]):
         """Creates slave objects in the HAL and in this instance. Sends some basic information to the 
         actual hardware to do this.
 
@@ -42,7 +42,7 @@ class EPOS4Bus:
         
         self.slaves = []
         for i, slaveInst in enumerate(self.HAL.slaves):
-            self.slaves += [id_type_map[i](self, i, slaveInst.name)]
+            self.slaves.append(id_type_map[i](self, i, slaveInst.name))
 
     def configure_slaves(self):
         """Configure slaves with specific constants, mode and PDO mappings."""
@@ -59,8 +59,8 @@ class EPOS4Bus:
             raise RuntimeError("Failed to transition to Safe-OP state after configuring slaves.")
         
         for slave in self.slaves:
-            slave.initializePDOVars()
-            slave.createPDOMessage([0] * len(slave.currentRxPDOMap))
+            slave._initialize_pdo_vars()
+            slave._create_pdo_message([0] * len(slave.currentRxPDOMap))
     
     def get_slaves_info(self, as_string=False)-> str | list[dict]:
         """Return a list of dictionaries containing information about each slave."""
@@ -110,7 +110,7 @@ class EPOS4Bus:
            state = state.value
         
         for slave in self.slaves:
-            if not slave.assertDeviceState(state):
+            if not slave.assert_device_state(state):
                 return False
         
         return True
@@ -118,12 +118,12 @@ class EPOS4Bus:
     def getCollectiveDeviceState(self):
         states = []
         for slave in self.slaves:
-            states += [slave.getDeviceState()]
+            states += [slave.get_device_state()]
         return states
 
     def setCollectiveDeviceState(self, state: Enum | int | str):
         for slave in self.slaves:
-            slave.setDeviceState(state)
+            slave.set_device_state(state)
     
     def get_slave_by_node(self, node_id):
         """Return the slave object corresponding to the given node ID."""
@@ -159,7 +159,7 @@ class EPOS4Bus:
         self.HAL.receiveProcessData()
         start = time.perf_counter_ns()
         for slave in self.slaves:
-            slave.fetchPDOData() # Put the low level HAL slave byte buffer into slave.PDOInput 
+            slave._fetch_pdo_data() # Put the low level HAL slave byte buffer into slave.PDOInput
 
             slave.PDOInput = struct.unpack('<' + slave.currentTxPDOPackFormat, slave.PDOInput)
         
@@ -242,7 +242,7 @@ class EPOS4Bus:
             for slave in self.slaves:
                 slave.RxData[slave._controlwordPDOIndex] = controlword
                 print(slave.RxData)
-                slave.createPDOMessage(slave.RxData)
+                slave._create_pdo_message(slave.RxData)
                 self.sendPDO()
                 self.receivePDO()
 
@@ -252,7 +252,7 @@ class EPOS4Bus:
         """Change the RxPDO output to switch the operating mode of the slave on the next master.SendPDO() call."""
 
         for slave in self.slaves:
-            slave.changeOperatingMode(operatingMode)
+            slave._change_operating_mode(operatingMode)
 
         self.sendPDO()
         self.receivePDO()
@@ -268,7 +268,7 @@ class EPOS4Bus:
         for slave in self.slaves:
             data = slave.RxData
             data[slave._controlwordPDOIndex] = 0b11111 # Control word to start homing #TODO: Consider implementing controlword class
-            slave.createPDOMessage(data)
+            slave._create_pdo_message(data)
         
         self.sendPDO()
         self.receivePDO()
@@ -276,7 +276,7 @@ class EPOS4Bus:
         for slave in self.slaves:
             data = slave.RxData
             data[slave._controlwordPDOIndex] = 0b01111 #TODO: Consider implementing controlword class
-            slave.createPDOMessage(data)
+            slave._create_pdo_message(data)
 
         # Send and receive PDOs 3 times so that the three buffer system is cleared of previous values to avoid false 'Target reached' signals
         self.sendPDO()
@@ -347,7 +347,7 @@ class EPOS4Bus:
             data[2] = profileAcceleration  # Profile acceleration
             data[3] = profileDeceleration  # Profile deceleration
             data[4] = profileVelocity  # Profile velocity
-            slave.createPDOMessage(data)  # Create PDO message for this slave
+            slave._create_pdo_message(data)  # Create PDO message for this slave
 
         self.sendPDO()  # Send PDOs to slaves
         self.receivePDO()
@@ -356,7 +356,7 @@ class EPOS4Bus:
         for slave in self.slaves:
             data = slave.RxData
             data[slave._controlwordPDOIndex] = 0b11111  # Stop motion command
-            slave.createPDOMessage(data)
+            slave._create_pdo_message(data)
 
         self.sendPDO()
         self.receivePDO()
@@ -407,18 +407,18 @@ class EPOS4Bus:
         if checkErrorRegisters:
             for slave in self.slaves:
                 print("Slave one diagnostics:")
-                resp = slave.SDORead(slave.objectDictionary.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_1)
+                resp = slave.sdo_read(slave.objectDictionary.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_1)
                 print("Diagnosis message 1: ", resp)
-                resp = slave.SDORead(slave.objectDictionary.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_2)
+                resp = slave.sdo_read(slave.objectDictionary.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_2)
                 print("Diagnosis message 2: ", resp)
-                resp = slave.SDORead(slave.objectDictionary.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_3)
+                resp = slave.sdo_read(slave.objectDictionary.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_3)
                 print("Diagnosis message 3: ", resp)
-                resp = slave.SDORead(slave.objectDictionary.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_4)
+                resp = slave.sdo_read(slave.objectDictionary.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_4)
                 print("Diagnosis message 4: ", resp)
-                resp = slave.SDORead(slave.objectDictionary.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_5)
+                resp = slave.sdo_read(slave.objectDictionary.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_5)
                 print("Diagnosis message 5: ", resp)
 
-        self.closeNetworkInterface()
+        self.close()
 
 
 class EPOS4Motor:
@@ -459,8 +459,12 @@ class EPOS4Motor:
         """String representation of the slave."""
         return f"Slave(node={self.node}, state={self.state}, objectDictionary={self.objectDictionary})"
 
+    def identify(self, enable=True):
+        """Enable or disable identification"""
+        pass
+
     # Example method to get slave-specific info
-    def getInfo(self):
+    def get_info(self):
         """Returns key information about this slave."""
         return {
             "node": self.node,
@@ -471,37 +475,35 @@ class EPOS4Motor:
         }
 
     ### State methods ###
-    def assertNetworkState(self, state: int) -> bool:
+    def _assert_network_state(self, state: int) -> bool:
         return self.HAL.assertNetworkState(self, state)
     
-    def getNetworkState(self):
+    def _get_network_state(self):
         return self.HAL.getNetworkState(self)
 
-    def setNetworkState(self, state: int):
-
+    def _set_network_state(self, state: int):
         if isinstance(state, Enum) and not isinstance(state, StatuswordStates):
-            state = state.value 
-
+            state = state.value
         return self.HAL.setNetworkState(self, state)
 
     # b. Applies to device states
-    def assertDeviceState(self, state: int) -> bool:
+    def assert_device_state(self, state: int) -> bool:
         return self.HAL.assertDeviceState(self, state)
 
-    def getDeviceState(self):
+    def get_device_state(self):
         return self.HAL.getDeviceState(self)
 
-    def setDeviceState(self, state: int, mode = "automated"):
+    def set_device_state(self, state: int, mode ="automated"):
         """Set the device state of an individual slave. If the mode is default,
         try to set the state regardless of current state. If the mode is automated,
-        automatically find the correct set of transtiions and set the state."""
+        automatically find the correct set of transitions and set the state."""
 
         if mode.lower() == 'default': 
             self.HAL.setDeviceState(self, state)
             return None
         
         elif mode.lower() == 'automated':
-            statusword = self.getDeviceState()
+            statusword = self.get_device_state()
             deviceState = getStatuswordState(statusword)
             desiredState = state
 
@@ -509,26 +511,24 @@ class EPOS4Motor:
             for controlword in controlwords:
                 self.HAL.setDeviceState(self, controlword)
             
-            if self.assertDeviceState(desiredState):
+            if self.assert_device_state(desiredState):
                 return None
     
     ### Communication methods ###
     ## SDO Methods ##
-    def SDORead(self, address: tuple):
-
+    def _sdo_read(self, address: tuple):
         if isinstance(address, Enum):
             address = address.value.value
-
         return self.HAL.SDORead(self, address)
 
-    def SDOWrite(self, address: Enum| tuple, value: int, completeAccess=False):
+    def _sdo_write(self, address: Enum | tuple, value: int, completeAccess=False):
         self.HAL.SDOWrite(self, address, value, completeAccess)
 
     ## PDO Methods ##
-    def choosePDOMap(self, syncManager, PDOAddress):
+    def _choose_pdo_map(self, syncManager, PDOAddress):
         raise NotImplementedError
 
-    def createPDOMessage(self, data: list[int]):
+    def _create_pdo_message(self, data: list[int]):
         """"Create a PDO rx (outgoing) message to this slave with the given data. This will overwrite all data currently
         in RxData"""
         packFormat = ''
@@ -538,10 +538,10 @@ class EPOS4Motor:
         self.HAL.addPDOMessage(self, packFormat, data)
         self.RxData = data
 
-    def fetchPDOData(self):
+    def _fetch_pdo_data(self):
         self.HAL.updateSoftSlavePDOData(self)
 
-    def initializePDOVars(self):
+    def _initialize_pdo_vars(self):
         """Finds the most important addresses of the Rx and Tx PDO and assigns them to the variables, as well as making the pack formats for the rx and tx pdos."""
 
         self._statuswordPDOIndex = None
@@ -575,7 +575,7 @@ class EPOS4Motor:
         for txAddress in self.currentTxPDOMap:
             self.currentTxPDOPackFormat += txAddress[2]
 
-    def changeOperatingMode(self, operatingMode: int | OperatingModes):
+    def _change_operating_mode(self, operatingMode: int | OperatingModes):
         """Change the RxPDO output to switch the operating mode of the slave on the next master.SendPDO() call."""
 
         if self.currentRxPDOMap == None:
@@ -597,21 +597,27 @@ class EPOS4Motor:
             self.RxData = [0] * len(self.currentRxPDOMap)   # This could be bad, I'm trusting that maxon has it setup such that PDOs with all zeros or the lack of data results in no changes on the slave
         
         self.RxData[setOperatingModePDOIndex] = operatingMode
-        self.createPDOMessage(self.RxData)
+        self._create_pdo_message(self.RxData)
         
     # Homing Mode (HMM) #
-    def performHoming(self):
+    def home(self):
         """Requires PDO, operating mode homing, and device state operation enabled. Change the RxPDO output to tell the slave to begin the homing
         operation on the next master.SendPDO() call."""
         
 
     # Profile Position Mode (PPM) #
+    def profile_position_move(self, position:int, configure_only=False):
+        """Perform a profile position move using previously configured (or, more likely, default)
+        motion profile parameters. If configure_only is true the move will not be started"""
+        self.HAL.goToPositions(position, slave_ids=self._id)
 
-
-    
-    ### Configuration methods ###
-    def setWatchDog(self, timeout_ms: float):
-        self.HAL.setWatchDog(self, timeout_ms)
+    def watchdog(self, timeout_ms: float|None):
+        """Set to None to disable the watchdog."""
+        if timeout_ms is None:
+            #TODO Disable the watchdog
+            raise NotImplementedError('Disabling watchdog not yet implemented')
+        else:
+            self.HAL.setWatchDog(self, timeout_ms)
 
 
 def EPOS4MicroTRB_12CC_Config(slaveNum:int, slaves: list[EPOS4Motor]):
@@ -645,26 +651,26 @@ def EPOS4MicroTRB_12CC_Config(slaveNum:int, slaves: list[EPOS4Motor]):
     txAddressInts = makePDOMapping(PPMTx)
 
     # Assign rx map
-    dev.SDOWrite(dev.objectDictionary.NUMBER_OF_MAPPED_OBJECTS_IN_RXPDO_1, 0)
+    dev._sdo_write(dev.objectDictionary.NUMBER_OF_MAPPED_OBJECTS_IN_RXPDO_1, 0)
     for i, addressInt in enumerate(rxAddressInts):
-        dev.SDOWrite((0x1600, i + 1, 'I'), addressInt)
-    dev.SDOWrite(dev.objectDictionary.NUMBER_OF_MAPPED_OBJECTS_IN_RXPDO_1, len(PPMRx))
+        dev._sdo_write((0x1600, i + 1, 'I'), addressInt)
+    dev._sdo_write(dev.objectDictionary.NUMBER_OF_MAPPED_OBJECTS_IN_RXPDO_1, len(PPMRx))
 
     # Assign tx map
-    dev.SDOWrite(dev.objectDictionary.NUMBER_OF_MAPPED_OBJECTS_IN_TXPDO_1, 0)
+    dev._sdo_write(dev.objectDictionary.NUMBER_OF_MAPPED_OBJECTS_IN_TXPDO_1, 0)
     for i, addressInt in enumerate(txAddressInts):
-        dev.SDOWrite((0x1A00, i + 1, 'I'), addressInt)
-    dev.SDOWrite(dev.objectDictionary.NUMBER_OF_MAPPED_OBJECTS_IN_TXPDO_1, len(PPMTx))
+        dev._sdo_write((0x1A00, i + 1, 'I'), addressInt)
+    dev._sdo_write(dev.objectDictionary.NUMBER_OF_MAPPED_OBJECTS_IN_TXPDO_1, len(PPMTx))
 
     dev.currentRxPDOMap = PPMRx
     dev.currentTxPDOMap = PPMTx
 
     # Configure Digital Inputs (example)
     #TODO these write fucntions seem to expect a tuple not an Enum
-    dev.SDOWrite(dev.objectDictionary.DIGITAL_INPUT_CONFIGURATION_DGIN_1, 255)
-    dev.SDOWrite(dev.objectDictionary.DIGITAL_INPUT_CONFIGURATION_DGIN_2, 1)
-    dev.SDOWrite(dev.objectDictionary.DIGITAL_INPUT_CONFIGURATION_DGIN_1, 0)
+    dev._sdo_write(dev.objectDictionary.DIGITAL_INPUT_CONFIGURATION_DGIN_1, 255)
+    dev._sdo_write(dev.objectDictionary.DIGITAL_INPUT_CONFIGURATION_DGIN_2, 1)
+    dev._sdo_write(dev.objectDictionary.DIGITAL_INPUT_CONFIGURATION_DGIN_1, 0)
 
     # Set the home offset move distance
-    dev.SDOWrite(dev.objectDictionary.HOME_OFFSET_MOVE_DISTANCE, -622080)
+    dev._sdo_write(dev.objectDictionary.HOME_OFFSET_MOVE_DISTANCE, -622080)
     logging.debug("Slave configuration complete.")

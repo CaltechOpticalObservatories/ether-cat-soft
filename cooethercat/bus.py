@@ -5,6 +5,7 @@ import struct
 from enum import Enum
 from logging import getLogger
 from .helpers import STATUSWORD_STATE_BITMASK
+import netifaces
 
 class EthercatBus:
 
@@ -12,13 +13,21 @@ class EthercatBus:
         self.ifname = ifname
         self.pysoem_master = pysoem.Master()
 
-    ### Network interface methods ###
     #TODO replace these with decorators that automate this, Bus user shall not need to worry about interface state.
-    def openNetworkInterface(self):
+    def open(self):
         """Opens the network interface with the given interface name."""
+        try:
+            if self.ifname in netifaces.interfaces():
+                address_families = netifaces.ifaddresses(self.ifname)
+                if not netifaces.AF_LINK in address_families:
+                    raise RuntimeError(f"Interface {self.ifname} is not UP.")
+            else:
+                raise RuntimeError(f"Interface {self.ifname} not found.")
+        except Exception as e:
+            raise e
         self.pysoem_master.open(self.ifname)  # pysoem doesn't return anything, so we can't check if it was successful
 
-    def closeNetworkInterface(self):
+    def close(self):
         """Closes the network interface."""
         self.pysoem_master.close()
 
@@ -80,7 +89,7 @@ class EthercatBus:
                    "ID: {id} - Name: {name}, Manufacturer ID: {manufacturer}, Revision: {revision}, State: {state}")
             string = ("Slave Information:"+
              '\n----\n'.join( [fmt.format(**rec) for rec in data.values()])+
-             '\nTotal slaves: {len(self.pysoem_master.slaves)}')
+             f'\nTotal slaves: {len(self.pysoem_master.slaves)}')
 
         return string if as_string else data
 
