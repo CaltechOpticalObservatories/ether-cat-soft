@@ -63,7 +63,7 @@ class EPOS4Obj:
           
           self.value = (index, subIndex, packFormat, length)
 
-
+#TODO This really shouldn't be an enum!
 class EPOS4ObjDict(Enum):
     """Object dictionary containing the same information as the Firmware Specification guide
     for the EPOS4 Micro. See section 6.2 for more details"""
