@@ -1,11 +1,12 @@
 from collections import OrderedDict
-
 import pysoem
 import struct
 from enum import Enum
 from logging import getLogger
-from .helpers import STATUSWORD_STATE_BITMASK
 import netifaces
+
+from .helpers import STATUSWORD_STATE_BITMASK
+
 
 class EthercatBus:
 
@@ -61,9 +62,9 @@ class EthercatBus:
     ### Slave configuration methods ###
     def initialize_slaves(self):
         """Creates slave objects for each slave and assigns them to self.slaves. Returns the number of slaves."""
-        numSlaves = self.pysoem_master.config_init()
+        n = self.pysoem_master.config_init()
         getLogger(__name__).info(self.slave_info(as_string=True))
-        return numSlaves
+        return n
 
     def slave_info(self, as_string=False):
         """Gathers detailed information for each slave."""
@@ -81,7 +82,7 @@ class EthercatBus:
                 try:
                     data[slave_ndx][key] = getattr(slave, attrib, default)  # Revision number
                 except Exception as e:
-                    data[slave_ndx][key] = f"<Error {e} for '{x}' attribute>"
+                    data[slave_ndx][key] = f"<Error {e} for '{attrib}' attribute>"
 
         if as_string:
             fmt = ("Available attributes: {attributes}\n"
@@ -96,7 +97,6 @@ class EthercatBus:
         """Configures the slaves"""
         self.pysoem_master.config_map()
 
-    #TODO Is this EPOS4 Specific?
     def setWatchDog(self, slaveInstance, timeout: float):
         """Sets the watchdog timeout for the slave.
         Inputs:
@@ -157,11 +157,6 @@ class EthercatBus:
 
     def receiveProcessData(self):
         self.pysoem_master.receive_processdata(timeout=2000)
-
-    def updateSoftSlavePDOData(self, slaveInstance):
-        """Puts the PDO data from the lower level pysoem.slave into the
-        higher level slave."""
-        slaveInstance.PDOInput = self.pysoem_master.slaves[slaveInstance.node].input
 
     def addPDOMessage(self, slaveInstance, packFormat, data):
         """Adds a PDO message to the slave's PDO buffer."""
