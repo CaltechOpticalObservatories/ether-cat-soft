@@ -1,4 +1,5 @@
 from enum import Enum
+from logging import getLogger
 
 STATUSWORD_STATE_BITMASK = 0b1101111
 
@@ -153,7 +154,7 @@ def getInfo(identifier: str | int, ObjDict) -> None:
     if not foundCMD:
         print("No command with that identifier was found in the object dictionary. Not all\n commands from the firmware spec guide have been entered. Use the EPOSObject for help adding a command.")
 
-def getStatuswordState(statusword: int) -> str:
+def getStatuswordState(statusword: int|Enum) -> str:
     """Returns the current state name of the statusword."""
     #TODO this whole statusword and enum stuff needs a rework, why are we ints in some places, strings in others and
     # the enum in still others. thats the whole point of a type to handle that for you, sigh.
@@ -236,7 +237,7 @@ def getStateTransitions(startState: str, endState: str) -> list[int]:
             A list of controlwords that each correspond to a state transition
     """
 
-    print(startState, endState)
+    getLogger(__name__).debug(f'Getting transition from {startState} to {endState}.')
 
     ### Catch simple transition cases ###
     if startState == endState:

@@ -163,25 +163,26 @@ class EPOS4Bus:
     def waitForStatePDO(self, desiredState: StatuswordStates):
         """Wait until all slaves are in the desired state. This function will block until the desired state is reached."""
 
-        print("Waiting for state")
+        getLogger(__name__).debug(f"Waiting for state {desiredState}")
 
         for _ in range(3):
             self.sendPDO()
             self.receivePDO()
 
         while True:
-            self.sendPDO()
-            self.receivePDO()
-
             pending = False
-            for i, slave in enumerate(self.slaves):
-                if not assertStatuswordState(slave.PDOInput[slave._statuswordPDOIndex], desiredState):
+            for slave in self.slaves:
+                if not assertStatuswordState(slave._statusword, desiredState):
                     pending = True
-                    getLogger(__name__).debug(f"Slave {i} not in state {slave.PDOInput[slave._statuswordPDOIndex]} (ndx={slave._statuswordPDOIndex})")
+                    getLogger(__name__).debug(f"Slave {slave.node} not in state {desiredState} "
+                                              f"({slave._statusword & STATUSWORD_STATE_BITMASK})")
                     break
             
             if not pending:
                 break
+
+            self.sendPDO()
+            self.receivePDO()
 
     def assertStatuswordStatePDO(self, state: StatuswordStates):
 
@@ -192,8 +193,7 @@ class EPOS4Bus:
 
         # Check the states of all slaves
         for slave in self.slaves:
-            statusword = slave.PDOInput[slave._statuswordPDOIndex]
-            if not assertStatuswordState(statusword, state):
+            if not assertStatuswordState(slave._statusword, state):
                 return False
         return True
 
@@ -201,19 +201,20 @@ class EPOS4Bus:
         """Change the device state of all slaves to the desired state. Will only work if all slaves are in the same start state."""
 
         #TODO Doesn't this need to be done for all slaves (or at least some sort of interlink condition verified)
-        self.receivePDO()
+        # self.receivePDO()
         statusword = self.slaves[0]._statusword
 
         if assertStatuswordState(statusword, StatuswordStates.NOT_READY_TO_SWITCH_ON):
-            print("Slave needs time to auto switch states")
+            getLogger(__name__).info("Slave needs time to auto switch states")
             while True:
                 self.sendPDO()
                 self.receivePDO()
 
                 statusword = self.slaves[0]._statusword
-                print(getStatuswordState(statusword), assertStatuswordState(statusword, StatuswordStates.NOT_READY_TO_SWITCH_ON), bin(statusword))
+                getLogger(__name__).debug(f'{getStatuswordState(statusword)} ({bin(statusword)}), '
+                                          f'{assertStatuswordState(statusword, StatuswordStates.NOT_READY_TO_SWITCH_ON)}')
                 if not assertStatuswordState(statusword, StatuswordStates.NOT_READY_TO_SWITCH_ON):
-                    print("Reached switch on disabled")
+                    getLogger(__name__).info("Ready to switch on")
                     break
 
         startingState = getStatuswordState(statusword)
@@ -234,26 +235,54 @@ class EPOS4Bus:
         if wait:
             self.waitForStatePDO(desiredState)
 
-    def changeOperatingMode(self, operatingMode: int | OperatingModes):
-        """Change the RxPDO output to switch the operating mode of the slave on the next master.SendPDO() call."""
+    def _block_during_move(self, verbose=False):
+        """Block the master until all slaves have reached their target positions."""
+        if verbose:
+            getLogger(__name__).info("Actual positions:")
+            string = '  |  '.join([f'Slave {slave.node}' for slave in self.slaves])
+            getLogger(__name__).info(string)
 
-        for slave in self.slaves:
-            slave._change_operating_mode(operatingMode)
+        # Send and receive PDOs 3 times so that the three buffer system is cleared of previous values to avoid false 'Target reached' signals
+        for _ in range(3):
+            self.sendPDO()
+            self.receivePDO()
 
-        self.sendPDO()
-        self.receivePDO()
+        while True:
+            self.sendPDO()
+            self.receivePDO()
 
-    def performHoming(self, printActualPositions=True):
+            moving = False
+            strings = []
+            for slave in self.slaves:
+                # Print the actual position if asked
+                strings.append(f'{slave.PDOInput[1]}')
+
+                statusword = slave.PDOInput[slave._statuswordPDOIndex]
+                moving = moving or (statusword & (1 << 10) != 1 << 10)  # Checking if the target position is reached
+
+            if verbose:
+                getLogger(__name__).info('  |  '.join(strings))
+
+            # If no slave is moving anymore, we are done
+            if not moving:
+                break
+
+    def home_motors(self, verbose=True):
         """Start the homing process of all slaves."""
 
         if not self.assertStatuswordStatePDO(StatuswordStates.OPERATION_ENABLED):
             self.changeDeviceStatesPDO(StatuswordStates.OPERATION_ENABLED)
 
-        self.changeOperatingMode(OperatingModes.HOMING_MODE)
+        for slave in self.slaves:
+            slave._change_operating_mode(OperatingModes.HOMING_MODE)
 
+        self.sendPDO()
+        self.receivePDO()
+
+        #TODO move these control words into Enums in cooethercat.helpers
         for slave in self.slaves:
             data = slave.RxData
-            data[slave._controlwordPDOIndex] = 0b11111 # Control word to start homing #TODO: Consider implementing controlword class
+            data[slave._controlwordPDOIndex] = 0b11111 # Control word to start homing
             slave._create_pdo_message(data)
         
         self.sendPDO()
@@ -261,45 +290,10 @@ class EPOS4Bus:
 
         for slave in self.slaves:
             data = slave.RxData
-            data[slave._controlwordPDOIndex] = 0b01111 #TODO: Consider implementing controlword class
+            data[slave._controlwordPDOIndex] = 0b01111  #TODO: What is this control word doing
             slave._create_pdo_message(data)
 
-        # Send and receive PDOs 3 times so that the three buffer system is cleared of previous values to avoid false 'Target reached' signals
-        self.sendPDO()
-        self.receivePDO()
-
-        self.sendPDO()
-        self.receivePDO()
-
-        self.sendPDO()
-        self.receivePDO()
-
-        if printActualPositions:
-            print("Slave actual positions:")
-            for slave in self.slaves:
-                print(f"Slave {slave.node}:", end='  |  ')
-
-        homing = True
-        while homing:
-            self.sendPDO()
-            self.receivePDO()
-
-            oneSlaveStillHoming = False
-
-            for slave in self.slaves:
-                statusword = slave.PDOInput[slave._statuswordPDOIndex]
-                if statusword & (1 << 10) != 1 << 10:
-                    oneSlaveStillHoming = True
-
-                if printActualPositions:
-                    print(slave.PDOInput[1], end='  |  ')
-            
-            if printActualPositions:
-                print('')
-            
-            if not oneSlaveStillHoming:
-                homing = False
-                break
+        self._block_during_move(verbose=verbose)
 
     def move_to(self, positions: list[int], acceleration=10000, deceleration=10000, speed=1000, blocking=True, verbose=False, slave_ids=None):
         """Send slaves to the given positions based on their node IDs."""
@@ -308,7 +302,11 @@ class EPOS4Bus:
         if not self.assertStatuswordStatePDO(StatuswordStates.OPERATION_ENABLED):
             self.changeDeviceStatesPDO(StatuswordStates.OPERATION_ENABLED)
 
-        self.changeOperatingMode(OperatingModes.PROFILE_POSITION_MODE)
+        for slave in self.slaves:
+            slave._change_operating_mode(OperatingModes.PROFILE_POSITION_MODE)
+
+        self.sendPDO()
+        self.receivePDO()
 
         # If no slave_ids are provided, assume all slaves get the same position
         if slave_ids is None:
@@ -349,39 +347,7 @@ class EPOS4Bus:
 
         # If blocking, wait until all slaves have reached their target positions
         if blocking:
-
-            if verbose:
-                getLogger(__name__).info("Actual positions:")
-                string = '  |  '.join([f'Slave {slave.node}' for slave in self.slaves])
-                getLogger(__name__).info(string)
-
-            # Clear old statuswords to avoid false 'Target reached' signals
-            self.sendPDO()
-            self.receivePDO()
-
-            self.sendPDO()
-            self.receivePDO()
-
-            while True:
-                self.sendPDO()
-                self.receivePDO()
-
-                moving = False
-                strings = []
-                for slave in self.slaves:
-                    # Print the actual position if asked
-                    strings.append(f'{slave.PDOInput[1]}')
-
-                    statusword = slave.PDOInput[slave._statuswordPDOIndex]
-                    moving = moving or (statusword & (1 << 10) != 1 << 10)  # Checking if the target position is reached
-
-                if verbose:
-                    getLogger(__name__).info('  |  '.join(strings))
-
-                # If no slave is moving anymore, we are done
-                if not moving:
-                    break
-
+            self._block_during_move(verbose=verbose)
 
     def __del__(self, checkErrorRegisters=True):
 
@@ -491,27 +457,26 @@ class EPOS4Motor:
     def get_device_state(self):
         return self.HAL.getDeviceState(self)
 
-    def set_device_state(self, state: int, mode ="automated"):
+    def set_device_state(self, state: int|Enum, mode ="automated"):
         """Set the device state of an individual slave. If the mode is default,
         try to set the state regardless of current state. If the mode is automated,
         automatically find the correct set of transitions and set the state."""
 
         if mode.lower() == 'default': 
             self.HAL.setDeviceState(self, state)
-            return None
-        
         elif mode.lower() == 'automated':
             statusword = self.get_device_state()
             deviceState = getStatuswordState(statusword)
             desiredState = state
 
             controlwords = getStateTransitions(deviceState, getStatuswordState(desiredState))
+            getLogger(__name__).debug(f'State transition control word: {controlwords}')
             for controlword in controlwords:
                 self.HAL.setDeviceState(self, controlword)
-            
-            if self.assert_device_state(desiredState):
-                return None
-    
+
+        if not assertStatuswordState(self.get_device_state(), state):
+            getLogger(__name__).warning("Failed to set device state")
+
     ### Communication methods ###
     ## SDO Methods ##
     def _sdo_read(self, address: tuple):
@@ -597,11 +562,11 @@ class EPOS4Motor:
         self.RxData[setOperatingModePDOIndex] = operatingMode
         self._create_pdo_message(self.RxData)
         
-    # Homing Mode (HMM) #
-    def home(self):
-        """Requires PDO, operating mode homing, and device state operation enabled. Change the RxPDO output to tell the slave to begin the homing
-        operation on the next master.SendPDO() call."""
-        
+    # # Homing Mode (HMM) #
+    # def home(self):
+    #     """Requires PDO, operating mode homing, and device state operation enabled. Change the RxPDO output to tell the slave to begin the homing
+    #     operation on the next master.SendPDO() call."""
+    #
 
     # Profile Position Mode (PPM) #
     def profile_position_move(self, position:int, configure_only=False):
@@ -664,7 +629,7 @@ def EPOS4MicroTRB_12CC_Config(slaveNum:int, slaves: list[EPOS4Motor]):
     dev.currentTxPDOMap = PPMTx
 
     # Configure Digital Inputs (example)
-    #TODO these write fucntions seem to expect a tuple not an Enum
+    #TODO these write functions seem to expect a tuple not an Enum
     dev._sdo_write(dev.objectDictionary.DIGITAL_INPUT_CONFIGURATION_DGIN_1, 255)
     dev._sdo_write(dev.objectDictionary.DIGITAL_INPUT_CONFIGURATION_DGIN_2, 1)
     dev._sdo_write(dev.objectDictionary.DIGITAL_INPUT_CONFIGURATION_DGIN_1, 0)
