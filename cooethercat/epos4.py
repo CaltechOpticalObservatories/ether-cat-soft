@@ -90,6 +90,10 @@ class EPOS4Bus:
         else:
             return slave_info
 
+    def slave_alarms(self):
+        self._bus.pysoem_master.read_state()
+        return [s.al_status for s in  self._bus.pysoem_master.slaves]
+
     ### State Methods  SDO ###
     def assertNetworkWideState(self, state: Enum| int) -> bool:
         state = state.value if isinstance(state, Enum) else state
@@ -128,12 +132,13 @@ class EPOS4Bus:
         def pdo_sender():
             self._pdo_shutdown.clear()
             while not self._pdo_shutdown.is_set():
-                start = time.perf_counter_ns()
+                #start = time.perf_counter_ns()
                 self._send_pdo(sleep=False)
-                time.sleep(max(self.PDOCycleTime - (time.perf_counter_ns() - start) * 1e-9, 0))
-                start = time.perf_counter_ns()
+                # time.sleep(max(self.PDOCycleTime - (time.perf_counter_ns() - start) * 1e-9, 0))
+                #start = time.perf_counter_ns()
                 self._receive_pdo(sleep=False)
-                time.sleep(max(self.PDOCycleTime - (time.perf_counter_ns() - start) * 1e-9, 0))
+                # time.sleep(max(self.PDOCycleTime - (time.perf_counter_ns() - start) * 1e-9, 0))
+                time.sleep(.005)
 
         self._pdo_thread = threading.Thread(name='Ethercat PDO thread', target=pdo_sender, daemon=True)
         self._pdo_thread.start()
@@ -147,13 +152,15 @@ class EPOS4Bus:
             getLogger(__name__).error("Failed to enable PDO")
             self._pdo_shutdown.set()
             getLogger(__name__).debug("Joining on PDO thread")
-            self._pdo_thread.join(timeout=1)
+            self._pdo_thread.join()
+            self._pdo_thread = None
             return False
 
     def disable_pdo(self):
         if self._pdo_thread and self._pdo_thread.is_alive():
             self._pdo_shutdown.set()
             self._pdo_thread.join()
+            self._pdo_thread = None
         self.setNetworkWideState(NetworkManagementStates.SAFE_OP)
     
     def _send_pdo(self, sleep=True):
@@ -250,7 +257,7 @@ class EPOS4Bus:
 
         for controlword in stateTransitionControlwords:
             for slave in self.slaves:
-                slave._set_controlword(controlword)
+                slave.RxData[slave._controlwordPDOIndex] = controlword
                 slave._create_pdo_message(slave.RxData)
             self._send_receive_pdo()
 
@@ -414,10 +421,10 @@ class EPOS4Motor:
     def _statusword(self):
         return self.PDOInput[self._statuswordPDOIndex]
 
-    def _set_controlword(self, value: int):
-        getLogger(__name__).debug(f"Setting controlword (index {self._controlwordPDOIndex}) to {value} in rxdata (from {self.RxData}).")
-        self.RxData[self._controlwordPDOIndex] = value
-
+    # def _set_controlword(self, value: int):
+    #     getLogger(__name__).debug(f"Setting controlword (index {self._controlwordPDOIndex}) to {value} in rxdata (from {self.RxData}).")
+    #     self.RxData[self._controlwordPDOIndex] = value
+    #
     # def _set_target_position(self, value: int):
     #     self.RxData[self._controlwordPDOIndex] = 0b01111
     #     self.RxData[1] = value
@@ -431,17 +438,17 @@ class EPOS4Motor:
         pass
 
     def check_errors(self):
-        print("Slave one diagnostics:")
+        print(f"Node {self.node} diagnostics:")
         resp = self._sdo_read(self.objectDictionary.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_1.value)
-        print("Diagnosis message 1: ", resp)
+        print(" Diagnosis message 1: ", resp)
         resp = self._sdo_read(self.objectDictionary.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_2.value)
-        print("Diagnosis message 2: ", resp)
+        print(" Diagnosis message 2: ", resp)
         resp = self._sdo_read(self.objectDictionary.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_3.value)
-        print("Diagnosis message 3: ", resp)
+        print(" Diagnosis message 3: ", resp)
         resp = self._sdo_read(self.objectDictionary.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_4.value)
-        print("Diagnosis message 4: ", resp)
+        print(" Diagnosis message 4: ", resp)
         resp = self._sdo_read(self.objectDictionary.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_5.value)
-        print("Diagnosis message 5: ", resp)
+        print(" Diagnosis message 5: ", resp)
 
     # Example method to get slave-specific info
     def get_info(self):
@@ -454,6 +461,24 @@ class EPOS4Motor:
             "currentRxPDOMap": self.currentRxPDOMap,
             "currentTxPDOMap": self.currentTxPDOMap,
         }
+
+    def position(self):
+        return self.PDOInput[1]
+
+    def velocity(self):
+        return self.PDOInput[2]
+
+    def following_error(self):
+        return self.PDOInput[3]
+
+    def device_mode_string(self):
+        try:
+            return StatuswordStates(self.PDOInput[self._statuswordPDOIndex]&STATUSWORD_STATE_BITMASK)
+        except ValueError:
+            return f"Unknown mode: ({self.PDOInput[self._statuswordPDOIndex]&STATUSWORD_STATE_BITMASK})"
+
+    def operation_mode_string(self):
+        return OperatingModes(self.PDOInput[self._modesOfOperationDisplayPDOIndex])
 
     ### State methods ###
     def _assert_network_state(self, state: int) -> bool:
@@ -518,7 +543,6 @@ class EPOS4Motor:
 
     def _initialize_pdo_vars(self):
         """Finds the most important addresses of the Rx and Tx PDO and assigns them to the variables, as well as making the pack formats for the rx and tx pdos."""
-
         self._statuswordPDOIndex = None
         self._controlwordPDOIndex = None
         self._setOperationModePDOIndex = None
