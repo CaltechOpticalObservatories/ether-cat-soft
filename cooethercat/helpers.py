@@ -6,12 +6,24 @@ STATUSWORD_STATE_BITMASK = 0b1101111
 class IncorrectState(Exception):
     pass
 
-
 class ControlWord(Enum):
-    START = 0b01111 # Control word to start movement
-    STOP = 0b11111  # Stop motion command
-    START_HOMING = 0b11111  # Control word to start homing
+    COMMAND_SHUTDOWN = 0x0006
+    COMMAND_SWITCH_ON_AND_ENABLE = 0x000F
+    COMMAND_START_HOMING = 0x001F
+    COMMAND_QUICK_STOP = 0x000B
+    COMMAND_HALT_HOMING = 0x011F
+    COMMAND_ABSOLUTE_START_IMMEDIATELY = 0x003F
 
+class ControlwordBits(Enum):
+    HALT = 8
+    START_HOMING = 4
+    QUICK_STOP = 2
+    ENABLE_VOLTAGE = 1
+    ENABLE_OPERATION = 3
+    NEW_SETPOINT = 4
+    CHANGE_SET_IMMEDIATELY = 5
+    ABSOLUTE_RELATIVE = 6
+    FAULT_RESET = 7
 
 class StatuswordStates(Enum):
     NOT_READY_TO_SWITCH_ON = 0
@@ -22,6 +34,22 @@ class StatuswordStates(Enum):
     QUICK_STOP_ACTIVE = 0b0000111
     FAULT_REACTION_ACTIVE = 0b0001111
     FAULT = 0b0001000
+
+class StatuswordBits(Enum):
+    READY_TO_SWITCH_ON = 0
+    SWITCHED_ON = 1
+    OPERATION_ENABLED = 2
+    FAULT = 3
+    VOLTAGE_ENABLED = 4
+    QUICK_STOP = 5
+    SWITCH_ON_DISABLED = 6
+    WARNING = 7
+    REMOTE = 9
+    TARGET_REACHED = 10
+    INTERNAL_LIMIT_ACTIVE = 11
+    HOMING_ATTAINED = 12
+    HOMING_ERROR = 13
+    POSITION_REFERENCE_TO_HOME = 15
 
 class NetworkManagementStates(Enum):
     NONE = 0x00
@@ -51,7 +79,17 @@ class OperatingModes(Enum):
     CYCLIC_SYNCHRONOUS_VELOCITY_MODE = 9
     CYCLIC_SYNCHRONOUS_TORQUE_MODE = 10
 
-# Current state                   States we can go to 
+class HomingMethods(Enum):
+    ACTUAL_POSITION = 37
+    INDEX_POSITIVE_SPEED = 34
+    INDEX_NEGATIVE_SPEED = 33
+    HOME_SWITCH_POSITIVE_SPEED = 23
+    HOME_SWITCH_NEGATIVE_SPEED = 27
+    LIMIT_SWITCH_POSITIVE = 18
+    LIMIT_SWITCH_NEGATIVE = 17
+
+
+# Current state                   States we can go to
 EPOS4_STATE_MACHINE = {
     'NOT_READY_TO_SWITCH_ON':     {},
     'SWITCH_ON_DISABLED':         {'READY_TO_SWITCH_ON': StateCommands.SHUTDOWN},
@@ -124,6 +162,8 @@ class EPOS4ObjDict(Enum):
     MODES_OF_OPERATION_DISPLAY = EPOS4Obj(0x6061, 0x00, 'b', 8) # 6.2.101
     POSITION_ACTUAL_VALUE = EPOS4Obj(0x6064, 0x00, 'i', 32) # 6.2.103
     VELOCITY_ACTUAL_VALUE = EPOS4Obj(0x606C, 0x00, 'i', 32) # 6.2.109
+    VELOCITY_DEMAND_VALUE = EPOS4Obj(0x606B, 0x00, 'i', 32)  # 6.2.10
+    TORQUE_ACTUAL_VALUE = EPOS4Obj(0x6077, 0x00, 'H', 16) # 6.2.109# 9
     TARGET_POSITION = EPOS4Obj(0x607A, 0x00, 'i', 32) # 6.2.113
     PROFILE_VELOCITY = EPOS4Obj(0x6081, 0x00, 'i', 32) # 6.2.118
     PROFILE_ACCELERATION = EPOS4Obj(0x6083, 0x00, 'i', 32) # 6.2.119

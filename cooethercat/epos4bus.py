@@ -8,7 +8,7 @@ from cooethercat.bus import EthercatBus
 from cooethercat.helpers import NetworkManagementStates, assertStatuswordState, STATUSWORD_STATE_BITMASK, \
     getStatuswordState, getStateTransitions, OperatingModes, ControlWord, StatuswordStates
 
-from cooethercat.epos4 import EPOS4Motor
+# from cooethercat.epos4 import EPOS4Motor
 
 class EPOS4Bus:
 
@@ -29,7 +29,7 @@ class EPOS4Bus:
         """
         self._bus = EthercatBus(interface)
         self.slaves: list["EPOS4Motor"] = []
-        self.PDOCycleTime = 0.005  # 10ms, official sync manager 2 cycle time is 2ms but I've run into issues
+        self.PDOCycleTime = 0.002  # 10ms, official sync manager 2 cycle time is 2ms but I've run into issues
         self._pdo_shutdown = threading.Event()
         self._pdo_thread = None
         self._pdo_lock = threading.Lock()
@@ -178,6 +178,8 @@ class EPOS4Bus:
         with self._pdo_lock:
             self._bus.sendProcessData()
             for s in self.slaves:
+                if s.pdo_message_pending.is_set():
+                    getLogger(__name__).info(f'Sent pending PDO messaage for slave {s.node}')
                 s.pdo_message_pending.clear()
         if sleep:
             time.sleep(self.PDOCycleTime)
@@ -188,10 +190,8 @@ class EPOS4Bus:
             start = time.perf_counter_ns()
             for slave in self.slaves:
                 # Put the low level HAL slave byte buffer into slave.PDOInput
-                # slave._fetch_pdo_data() # Put the low level HAL slave byte buffer into slave.PDOInput
-                # slave.PDOInput = struct.unpack('<' + slave.currentTxPDOPackFormat, slave.PDOInput)
                 x = self._bus.pysoem_master.slaves[slave.node].input
-                slave.pdo_input = struct.unpack('<' + slave.currentTxPDOPackFormat, x)
+                slave.pdo_input = struct.unpack('<' + slave.tx_pdo_pack_format, x)
             finish = time.perf_counter_ns()
 
         # Enforce the minimum PDO cycle time after performing all the above operations
@@ -207,9 +207,10 @@ class EPOS4Bus:
     def wait_for_device_states_pdo(self, state: StatuswordStates, timeout=10):
         """Wait until all slaves are in the desired state. This function will block until the desired state is reached."""
         start = time.time()
-
+        getLogger(__name__).debug(f'Waiting for {state} with timeout {timeout} in PDO mode.')
         while True:
             if self.assert_device_states_pdo(state):
+                getLogger(__name__).debug(f'Attained {state} in PDO mode.')
                 break
 
             if time.time() - start > timeout:
@@ -227,13 +228,11 @@ class EPOS4Bus:
             return True
 
     @pdo_mode_only
-    def set_device_states_pdo(self, state: StatuswordStates, wait=True):
+    def set_device_states_pdo(self, state: StatuswordStates, timeout=10):
         """Change the device state of all slaves to the desired state. Will only work if all slaves are in the same start state."""
         #TODO check that this overhauled function actually works now
         if self.assert_device_states_pdo(state):
             return
-
-        self.wait_for_device_states_pdo(state)
 
         # TODO get rid of this 4-line nonsense, should consolidate with proper state classes and object methods
         startingState = getStatuswordState(self.slaves[0]._statusword)
@@ -250,8 +249,8 @@ class EPOS4Bus:
                 slave.rx_data[slave._controlwordPDOIndex] = controlword
                 slave._create_pdo_message(slave.rx_data)
 
-        if wait:
-            self.wait_for_device_states_pdo(state)
+        if timeout:
+            self.wait_for_device_states_pdo(state, timeout=timeout)
 
     @pdo_mode_only
     def _block_until_target(self, verbose=False, timeout=10):
@@ -310,14 +309,14 @@ class EPOS4Bus:
 
         for slave in self.slaves:
             data = slave.rx_data
-            data[slave._controlwordPDOIndex] = ControlWord.START_HOMING.value
+            data[slave._controlwordPDOIndex] = ControlWord.COMMAND_START_HOMING.value
             slave._create_pdo_message(data)
 
         self.wait_for_pdo_transmit()
 
         for slave in self.slaves:
             data = slave.rx_data
-            data[slave._controlwordPDOIndex] = ControlWord.START.value
+            data[slave._controlwordPDOIndex] = ControlWord.COMMAND_SWITCH_ON_AND_ENABLE.value
             slave._create_pdo_message(data)
 
         self.wait_for_pdo_transmit()
@@ -325,24 +324,41 @@ class EPOS4Bus:
         self._block_until_target(verbose=verbose)
 
     @pdo_mode_only
-    def move_to(self, positions: int | dict[int], acceleration=10000, deceleration=10000, speed=1000, blocking=True,
+    def move_to(self, positions: int | dict[int], acceleration=10000, deceleration=10000, speed=4000, blocking=True,
                 verbose=False):
         """Send slaves to the given positions based on their node IDs."""
-
-        # Ensure the network is in operational mode
-        if not self.assert_device_states_pdo(StatuswordStates.OPERATION_ENABLED):
-            self.set_device_states_pdo(StatuswordStates.OPERATION_ENABLED)
-
-        for slave in self.slaves:
-            slave.change_operating_mode(OperatingModes.PROFILE_POSITION_MODE)
-
-        self.wait_for_pdo_transmit()
 
         # If no slave_ids are provided, assume all slaves get the same position
         if isinstance(positions, int):
             positions = {i:positions for i in range(len(self.slaves))}
 
+        # Ensure the network is in operational mode
+        if not self.assert_device_states_pdo(StatuswordStates.OPERATION_ENABLED):
+            self.set_device_states_pdo(StatuswordStates.OPERATION_ENABLED)
+
+        # for slave in self.slaves:
+        #     slave.change_operating_mode(OperatingModes.PROFILE_POSITION_MODE)
+
+        for slave in self.slaves:
+            data = slave.rx_data
+            data[slave._controlwordPDOIndex] = ControlWord.COMMAND_SHUTDOWN.value
+            slave._create_pdo_message(data)
+
+        self.wait_for_pdo_transmit()
+
+        for slave in self.slaves:
+            data = slave.rx_data
+            data[slave._controlwordPDOIndex] = ControlWord.COMMAND_SWITCH_ON_AND_ENABLE.value
+            data[5] = OperatingModes.PROFILE_POSITION_MODE.value
+            slave._create_pdo_message(data)
+
+        self.wait_for_pdo_transmit()
+
         for id, position in positions.items():
+            if not isinstance(id, int) and 0<id<len(self.slaves):
+                getLogger(__name__).warning(f'Skipping a position key {id} that does not denote a slave.')
+                continue
+
             slave = self.slaves[id]
 
             # Print information about the slave and its target position
@@ -350,7 +366,7 @@ class EPOS4Bus:
 
             # Prepare the data for the slave
             data = slave.rx_data
-            data[slave._controlwordPDOIndex] = ControlWord.START.value
+            data[slave._controlwordPDOIndex] = ControlWord.COMMAND_ABSOLUTE_START_IMMEDIATELY.value
             data[1] = position  # Target position
             data[2] = acceleration  # Profile acceleration
             data[3] = deceleration  # Profile deceleration
@@ -359,18 +375,19 @@ class EPOS4Bus:
 
         self.wait_for_pdo_transmit()
 
-        # Remove the start PPM motion control word from all slave buffers (necessary to avoid faults)
-        for id in positions.keys():
-            slave = self.slaves[id]
-
-            # Print information about the slave and its target position
-            getLogger(__name__).debug(f"Remove the start PPM motion control word from {slave.node} too avoid faults")
-
-            data = slave.rx_data
-            data[slave._controlwordPDOIndex] = ControlWord.STOP.value
-            slave._create_pdo_message(data)
-
-        self.wait_for_pdo_transmit()
+        #TODO figure this out, the controlword used corresponds to START_HOMING
+        # # Remove the start PPM motion control word from all slave buffers (necessary to avoid faults)
+        # for id in positions.keys():
+        #     slave = self.slaves[id]
+        #
+        #     # Print information about the slave and its target position
+        #     getLogger(__name__).debug(f"Remove the start PPM motion control word from {slave.node} too avoid faults")
+        #
+        #     data = slave.rx_data
+        #     data[slave._controlwordPDOIndex] = 0b11111
+        #     slave._create_pdo_message(data)
+        #
+        # self.wait_for_pdo_transmit()
 
         # If blocking, wait until all slaves have reached their target positions
         if blocking:

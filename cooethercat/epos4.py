@@ -1,7 +1,7 @@
 import time
 import threading
-
-from . import EPOS4Bus
+import ctypes
+from .epos4bus import EPOS4Bus
 from .helpers import *
 from .bus import EthercatBus
 
@@ -9,6 +9,8 @@ from .bus import EthercatBus
 
 
 class EPOS4Motor:
+    CONTROLWORD_DELAY_TIME = 0.01
+    STATUSWORD_DELAY_TIME = 0.01
 
     def __init__(self, master: EPOS4Bus, node: int, objectDictionary: str):
         """Initializes a slave object with the given Finite State Automation and object dictionary.
@@ -79,6 +81,34 @@ class EPOS4Motor:
         resp = self._sdo_read(self.object_dict.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_5.value)
         print(" Diagnosis message 5: ", resp)
 
+    def clear_faults(self):
+        controlword = self._sdo_read(self.object_dict.CONTROLWORD)
+        controlword |= 1 << ControlwordBits.FAULT_RESET.value
+        self._sdo_write(self.object_dict.CONTROLWORD, controlword)
+        self.wait_for_statusword_bits(1 << StatuswordBits.FAULT.value, bitvalues=0)
+
+    def wait_for_statusword_bits(self, bitmask, bitvalues=-1, timeout=1):
+        """! Wait for the statusword bits of the slave to be set
+        @param slave: the slave to wait for the statusword bits of
+        @param bitmask: the bitmask of the statusword bits to wait for
+        @param bitvalues: the values of the statusword bits to wait for if different from the bitmask
+        @param timeout: the timeout in seconds
+        @return: True if the statusword bits were set, False otherwise
+        """
+        if bitvalues == -1:
+            bitvalues = bitmask
+
+        start_time = time.time()
+        while True:
+            statusword = self._sdo_read(self.object_dict.STATUSWORD)
+            if (statusword & bitmask) == bitvalues:
+                return True
+            if time.time() - start_time > timeout:
+                raise TimeoutError(f'Timeout waiting for statusword ({bin(statusword)}) '
+                                   f'with bitmask ({bin(bitmask)}) and bitvalues ({bin(bitvalues)})')
+
+            time.sleep(self.STATUSWORD_DELAY_TIME)
+
     # Example method to get slave-specific info
     def get_info(self):
         """Returns key information about this slave."""
@@ -101,24 +131,43 @@ class EPOS4Motor:
 
     @property
     def moving(self):
-        #TODO this may actually merely be target position attained
-        # old code was: (statusword & (1 << 10) != 1 << 10)  # Checking if the target position is reached
-        return bool((self.pdo_input[self._statuswordPDOIndex] >> 10) & 0b1)
+        #TODO is merely be target position attained. it might be unattained but not moving for other reasons
+        return not bool((self.pdo_input[self._statuswordPDOIndex] >> StatuswordBits.TARGET_REACHED.value) & 0b1)
 
     @property
     def following_error(self):
         return self.pdo_input[3]
 
     @property
-    def device_mode_string(self):
+    def device_state(self):
         try:
             return StatuswordStates(self.pdo_input[self._statuswordPDOIndex] & STATUSWORD_STATE_BITMASK)
         except ValueError:
             return f"Unknown mode: ({self.pdo_input[self._statuswordPDOIndex] & STATUSWORD_STATE_BITMASK})"
 
     @property
-    def operation_mode_string(self):
+    def operation_mode(self):
         return OperatingModes(self.pdo_input[self._modesOfOperationDisplayPDOIndex])
+
+    @property
+    def controlword_sdo(self):
+        return self._sdo_read(self.object_dict.CONTROLWORD.value)
+
+    @property
+    def debug_info_sdo(self):
+        return {'device_state':self.device_state,
+                'position':self._sdo_read(self.object_dict.POSITION_ACTUAL_VALUE.value),
+                'target_position': self._sdo_read(self.object_dict.TARGET_POSITION.value),
+                'error_reg':self._sdo_read(self.object_dict.ERROR_REGISTER.value),
+                'mode_of_operation': self._sdo_read(self.object_dict.MODES_OF_OPERATION_DISPLAY.value),
+                'velocity_demand' : self._sdo_read(self.object_dict.VELOCITY_DEMAND_VALUE.value),
+                'velocity_actual': self._sdo_read(self.object_dict.VELOCITY_ACTUAL_VALUE.value),
+                'velocity_profile': self._sdo_read(self.object_dict.PROFILE_VELOCITY.value),
+                'velocity_target': self._sdo_read(self.object_dict.TARGET_VELOCITY.value),
+                'torque_actual' : self._sdo_read(self.object_dict.TORQUE_ACTUAL_VALUE.value),
+                'controlword': self._sdo_read(self.object_dict.CONTROLWORD.value),
+                'statusword': self._sdo_read(self.object_dict.STATUSWORD.value),
+                }
 
     ### State methods ###
     def _assert_network_state(self, state: Enum) -> bool:
@@ -177,6 +226,9 @@ class EPOS4Motor:
         if self.pdo_message_pending.is_set():
             raise RuntimeError("PDO message is already pending.")
         packFormat = ''.join([address[2] for address in self.currentRxPDOMap])
+        getLogger(__name__).info(f'Queuing a PDO message for slave {self.node}')
+
+        #TODO technically there is a race condition here add message and event set should be atomic
         self.HAL.addPDOMessage(self, packFormat, data)  #TODO make the HAL the EPOS4 BUS, this encapsulation is a mess
         self.pdo_message_pending.set()
         self.rx_data = data
@@ -257,20 +309,21 @@ class EPOS4Motor:
                 time.sleep(.1)  #todo don't have access to pdo cycle time in this object but that is the relevant interval
             time.sleep(1)  # wait for transition # TODO make this work nicely
 
-        self.change_operating_mode(OperatingModes.PROFILE_POSITION_MODE)
+        #self._sdo_write(0x6098, 0, bytes(ctypes.c_int8(homing_method)))
+        self.change_operating_mode(OperatingModes.HOMING_MODE)
 
         while self.pdo_message_pending.is_set():
             time.sleep(.1)  # todo don't have access to pdo cycle time in this object but that is the relevant interval
 
         data = self.rx_data
-        data[self._controlwordPDOIndex] = ControlWord.START_HOMING.value
+        data[self._controlwordPDOIndex] = ControlWord.COMMAND_START_HOMING.value
         self._create_pdo_message(data)
 
         while self.pdo_message_pending.is_set():
             time.sleep(.1)  # todo don't have access to pdo cycle time in this object but that is the relevant interval
 
         data = self.rx_data
-        data[self._controlwordPDOIndex] = ControlWord.START.value
+        data[self._controlwordPDOIndex] = ControlWord.COMMAND_SWITCH_ON_AND_ENABLE.value
         self._create_pdo_message(data)
 
         while self.pdo_message_pending.is_set():
@@ -297,11 +350,12 @@ class EPOS4Motor:
         time.sleep(1)
 
         data = self.rx_data
-        data[self._controlwordPDOIndex] = ControlWord.START.value
+        data[self._controlwordPDOIndex] = ControlWord.COMMAND_SWITCH_ON_AND_ENABLE.value
         data[1] = position  # Target position
         data[2] = 10000  # Profile acceleration
         data[3] = 10000  # Profile deceleration
         data[4] = speed  # Profile velocity
+        # data[5] = OperatingModes.PROFILE_POSITION_MODE.value
         self._create_pdo_message(data)  # Create PDO message for this slave
 
         while self.pdo_message_pending.is_set():
