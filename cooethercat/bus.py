@@ -1,4 +1,3 @@
-import threading
 from collections import OrderedDict
 import pysoem
 import struct
@@ -8,7 +7,7 @@ import netifaces
 
 from .helpers import STATUSWORD_STATE_BITMASK
 
-
+#TODO I'm increasingly of the opintion that having both EthercatBus and EPOS4Bus does not make sense and is a ppoor strategy
 class EthercatBus:
 
     def __init__(self, ifname: str):
