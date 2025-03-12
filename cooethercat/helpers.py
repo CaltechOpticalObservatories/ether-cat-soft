@@ -6,6 +6,13 @@ STATUSWORD_STATE_BITMASK = 0b1101111
 class IncorrectState(Exception):
     pass
 
+
+class ControlWord(Enum):
+    START = 0b01111 # Control word to start movement
+    STOP = 0b11111  # Stop motion command
+    START_HOMING = 0b11111  # Control word to start homing
+
+
 class StatuswordStates(Enum):
     NOT_READY_TO_SWITCH_ON = 0
     SWITCH_ON_DISABLED = 0b1000000
@@ -168,7 +175,7 @@ def getStatuswordState(statusword: int|Enum) -> str:
             return e.name # return the name of the state
     return "UNKNOWN STATE"
 
-def assertStatuswordState(statusword: int, state: StatuswordStates) -> bool:
+def assertStatuswordState(statusword: int, state: StatuswordStates|Enum) -> bool:
     """Asserts that the current state of the statusword matches the desired state."""
     maskedWord = (statusword & STATUSWORD_STATE_BITMASK)
     if state == StatuswordStates.NOT_READY_TO_SWITCH_ON: # Catch edge case where the state is not ready to switch on. (Value is 0, represents a lack of a bitmask and therefore this func always evaluates to true)
