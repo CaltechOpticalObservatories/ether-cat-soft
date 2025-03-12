@@ -1,3 +1,4 @@
+import threading
 from collections import OrderedDict
 import pysoem
 import struct
@@ -125,31 +126,33 @@ class EthercatBus:
         self.pysoem_master.write_state()
 
     # 2. Apply to individual slaves
-    def assertNetworkState(self, slaveInstance, state: int) -> bool:
+    def assertNetworkState(self, slaveInstance, state: int|Enum) -> bool:
+        state = state.value if isinstance(state, Enum) else state
         return self.getNetworkState(slaveInstance) == state
 
     def getNetworkState(self, slaveInstance):
         self.pysoem_master.read_state()  # Cursed, the slaves can't refresh their own state
         return self.pysoem_master.slaves[slaveInstance.node].state
 
-    def setNetworkState(self, slaveInstance, state: int):
+    def setNetworkState(self, slaveInstance, state: int | Enum):
+        state = state.value if isinstance(state, Enum) else state
         self.pysoem_master.slaves[slaveInstance.node].state = state
         self.pysoem_master.slaves[slaveInstance.node].write_state()
 
     ### Device state methods ###
     def assertDeviceState(self, slaveInstance, state: Enum | int) -> bool:
         state = state.value if isinstance(state, Enum) else state
-        statusword = self.SDORead(slaveInstance, slaveInstance.objectDictionary.STATUSWORD)
+        statusword = self.SDORead(slaveInstance, slaveInstance.object_dict.STATUSWORD)
         maskedWord = statusword & STATUSWORD_STATE_BITMASK
         maskedWord = maskedWord & state
         return maskedWord == state
 
     def getDeviceState(self, slaveInstance):
         """Returns the statusword of the slave."""
-        return self.SDORead(slaveInstance, slaveInstance.objectDictionary.STATUSWORD)
+        return self.SDORead(slaveInstance, slaveInstance.object_dict.STATUSWORD)
 
     def setDeviceState(self, slaveInstance, state: Enum | int):
-        self.SDOWrite(slaveInstance, slaveInstance.objectDictionary.CONTROLWORD, state)
+        self.SDOWrite(slaveInstance, slaveInstance.object_dict.CONTROLWORD, state)
 
     ### PDO methods ###
     def sendProcessData(self):
