@@ -4,6 +4,7 @@ import ctypes
 from .epos4bus import EPOS4Bus
 from .helpers import *
 from .bus import EthercatBus
+from .epos4registers import EPOS4_ERRORS
 
 #TODO Big picture: why is there both slave.set_device_state() and set_device_states_pdo (which uses PDO messages)
 
@@ -34,7 +35,7 @@ class EPOS4Motor:
 
         match objectDictionary:
             case "EPOS4":
-                self.object_dict = EPOS4ObjDict
+                self.object_dict = EPOS4Registers
         
         ### Default Operation Mode PDO Maps ###
         self.PPMRx = [self.object_dict.CONTROLWORD, self.object_dict.TARGET_POSITION,
@@ -70,15 +71,15 @@ class EPOS4Motor:
 
     def check_errors(self):
         print(f"Node {self.node} diagnostics:")
-        resp = self._sdo_read(self.object_dict.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_1.value)
+        resp = self._sdo_read(self.object_dict.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_1)
         print(" Diagnosis message 1: ", resp)
-        resp = self._sdo_read(self.object_dict.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_2.value)
+        resp = self._sdo_read(self.object_dict.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_2)
         print(" Diagnosis message 2: ", resp)
-        resp = self._sdo_read(self.object_dict.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_3.value)
+        resp = self._sdo_read(self.object_dict.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_3)
         print(" Diagnosis message 3: ", resp)
-        resp = self._sdo_read(self.object_dict.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_4.value)
+        resp = self._sdo_read(self.object_dict.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_4)
         print(" Diagnosis message 4: ", resp)
-        resp = self._sdo_read(self.object_dict.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_5.value)
+        resp = self._sdo_read(self.object_dict.DIAGNOSIS_HISTORY_DIAGNOSIS_MESSAGE_5)
         print(" Diagnosis message 5: ", resp)
 
     def clear_faults(self):
@@ -151,22 +152,24 @@ class EPOS4Motor:
 
     @property
     def controlword_sdo(self):
-        return self._sdo_read(self.object_dict.CONTROLWORD.value)
+        return self._sdo_read(self.object_dict.CONTROLWORD)
 
     @property
     def debug_info_sdo(self):
+        ec = self._sdo_read(self.object_dict.ERROR_CODE)
         return {'device_state':self.device_state,
-                'position':self._sdo_read(self.object_dict.POSITION_ACTUAL_VALUE.value),
-                'target_position': self._sdo_read(self.object_dict.TARGET_POSITION.value),
-                'error_reg':self._sdo_read(self.object_dict.ERROR_REGISTER.value),
-                'mode_of_operation': self._sdo_read(self.object_dict.MODES_OF_OPERATION_DISPLAY.value),
-                'velocity_demand' : self._sdo_read(self.object_dict.VELOCITY_DEMAND_VALUE.value),
-                'velocity_actual': self._sdo_read(self.object_dict.VELOCITY_ACTUAL_VALUE.value),
-                'velocity_profile': self._sdo_read(self.object_dict.PROFILE_VELOCITY.value),
-                'velocity_target': self._sdo_read(self.object_dict.TARGET_VELOCITY.value),
-                'torque_actual' : self._sdo_read(self.object_dict.TORQUE_ACTUAL_VALUE.value),
-                'controlword': self._sdo_read(self.object_dict.CONTROLWORD.value),
-                'statusword': self._sdo_read(self.object_dict.STATUSWORD.value),
+                'position':self._sdo_read(self.object_dict.POSITION_ACTUAL_VALUE),
+                'target_position': self._sdo_read(self.object_dict.TARGET_POSITION),
+                'error_reg':self._sdo_read(self.object_dict.ERROR_REGISTER),
+                'error_code': EPOS4_ERRORS.get(ec, f'Unknown error code ({ec})'),
+                'mode_of_operation': self._sdo_read(self.object_dict.MODES_OF_OPERATION_DISPLAY),
+                'velocity_demand' : self._sdo_read(self.object_dict.VELOCITY_DEMAND_VALUE),
+                'velocity_actual': self._sdo_read(self.object_dict.VELOCITY_ACTUAL_VALUE),
+                'velocity_profile': self._sdo_read(self.object_dict.PROFILE_VELOCITY),
+                'velocity_target': self._sdo_read(self.object_dict.TARGET_VELOCITY),
+                'torque_actual' : self._sdo_read(self.object_dict.TORQUE_ACTUAL_VALUE),
+                'controlword': self._sdo_read(self.object_dict.CONTROLWORD),
+                'statusword': self._sdo_read(self.object_dict.STATUSWORD),
                 }
 
     ### State methods ###
@@ -182,18 +185,22 @@ class EPOS4Motor:
         return self.HAL.setNetworkState(self, state)
 
     def assert_device_state(self, state: Enum) -> bool:
-        return self.HAL.assertDeviceState(self, state)
+        state = state.value if isinstance(state, Enum) else state
+        # TODO This only compares bits that are SET in the state, that seems like a bad idea
+        maskedWord = (self.get_device_state() & STATUSWORD_STATE_BITMASK) & state
+        return maskedWord == state
 
     def get_device_state(self):
-        return self.HAL.getDeviceState(self)
+        return self.HAL.SDORead(self, self.object_dict.STATUSWORD)
 
     def set_device_state(self, state: Enum, mode ="automated"):
         """Set the device state of an individual slave. If the mode is default,
         try to set the state regardless of current state. If the mode is automated,
         automatically find the correct set of transitions and set the state."""
 
-        if mode.lower() == 'default': 
-            self.HAL.setDeviceState(self, state)
+        if mode.lower() == 'default':
+            self.HAL.SDOWrite(self, self.object_dict.CONTROLWORD, state.value)
+
         elif mode.lower() == 'automated':
             statusword = self.get_device_state()
             device_state = getStatuswordState(statusword)
@@ -202,7 +209,7 @@ class EPOS4Motor:
             controlwords = getStateTransitions(device_state, getStatuswordState(desired_state))
             getLogger(__name__).debug(f'State transition control word: {controlwords}')
             for controlword in controlwords:
-                self.HAL.setDeviceState(self, controlword)
+                self.HAL.SDOWrite(self, self.object_dict.CONTROLWORD, controlword)
 
         #TODO this is "Failing" as it is getting SWITCHED_ON, likely because the get state poll is too fast and it hasn't yet attained
         # OPERATION_ENABLED, it should optionally wait or at least not speciously warn
@@ -211,10 +218,10 @@ class EPOS4Motor:
         if not assertStatuswordState(statusword, state):
             getLogger(__name__).warning(f"Failed to set device state, wanted {state}, got {statusword & STATUSWORD_STATE_BITMASK}")
 
-    def _sdo_read(self, address: Enum):
-        return self.HAL.SDORead(self, address.value)
+    def _sdo_read(self, address: EPOS4Obj):
+        return self.HAL.SDORead(self, address)
 
-    def _sdo_write(self, address: Enum | tuple, value: int, completeAccess=False):
+    def _sdo_write(self, address: EPOS4Obj, value: int, completeAccess=False):
         self.HAL.SDOWrite(self, address, value, completeAccess)
 
     def _choose_pdo_map(self, syncManager, PDOAddress):
@@ -225,7 +232,7 @@ class EPOS4Motor:
         in RxData"""
         if self.pdo_message_pending.is_set():
             raise RuntimeError("PDO message is already pending.")
-        packFormat = ''.join([address[2] for address in self.currentRxPDOMap])
+        packFormat = ''.join([address.packformat for address in self.currentRxPDOMap])
         getLogger(__name__).info(f'Queuing a PDO message for slave {self.node}')
 
         #TODO technically there is a race condition here add message and event set should be atomic
@@ -244,27 +251,26 @@ class EPOS4Motor:
         for i, address in enumerate(self.currentRxPDOMap):
             
             match address:
-
-                case self.object_dict.CONTROLWORD.value.value:
+                case self.object_dict.CONTROLWORD:
                     self._controlwordPDOIndex = i
-                case self.object_dict.MODES_OF_OPERATION.value.value:
+                case self.object_dict.MODES_OF_OPERATION:
                     self._setOperationModePDOIndex = i
 
         ### Find the most important addresses in the TxPDO ###
         for i, address in enumerate(self.currentTxPDOMap):
                 match address:
-                    case self.object_dict.STATUSWORD.value.value:
+                    case self.object_dict.STATUSWORD:
                         self._statuswordPDOIndex = i
-                    case self.object_dict.MODES_OF_OPERATION_DISPLAY.value.value:
+                    case self.object_dict.MODES_OF_OPERATION_DISPLAY:
                         self._modesOfOperationDisplayPDOIndex = i
 
     @property
     def tx_pdo_pack_format(self):
-        return ''.join([x[2] for x in self.currentTxPDOMap])
+        return ''.join([x.packformat for x in self.currentTxPDOMap])
 
     @property
     def rx_pdo_pack_format(self):
-        return ''.join([x[2] for x in self.currentRxPDOMap])
+        return ''.join([x.packformat for x in self.currentRxPDOMap])
 
     def change_operating_mode(self, mode: OperatingModes):
         """Change the RxPDO output to switch the operating mode of the slave on the next master.SendPDO() call."""
@@ -277,9 +283,9 @@ class EPOS4Motor:
             # self.RxData = [0] * len(self.currentRxPDOMap)   # This could be bad, I'm trusting that maxon has it setup such that PDOs with all zeros or the lack of data results in no changes on the slave
 
         rx_ndx = None
-        operationModeIndex, operationModeSubIndex, *_ = self.object_dict.MODES_OF_OPERATION.value.value
+        operationModeIndex, operationModeSubIndex, *_ = self.object_dict.MODES_OF_OPERATION
         for i, address in enumerate(self.currentRxPDOMap):
-            if address[0] == operationModeIndex and address[1] == operationModeSubIndex:
+            if address.index == operationModeIndex and address.subindex == operationModeSubIndex:
                 rx_ndx = i
         
         if rx_ndx is None:

@@ -1,4 +1,6 @@
 from collections import OrderedDict
+from typing import Iterable
+
 import pysoem
 import struct
 from enum import Enum
@@ -33,29 +35,16 @@ class EthercatBus:
         self.pysoem_master.close()
 
     ### SDO methods ###
-    def SDORead(self, slaveInstance, address: tuple):
+    def SDORead(self, slaveInstance, address: Iterable):
         """Reads a Service Data Object (SDO) from a slave."""
         slave = self.pysoem_master.slaves[slaveInstance.node]
-
-        if isinstance(address, Enum):
-            address = address.value.value
-
         index, subIndex, packFormat, *_ = address
-
         response = struct.unpack('<' + packFormat, slave.sdo_read(index, subIndex))
+        return response[0] if len(response) == 1 else response
 
-        if len(response) == 1:
-            return response[0]
-
-        return response
-
-    def SDOWrite(self, slaveInstance, address: tuple, data, completeAccess=False):
+    def SDOWrite(self, slaveInstance, address: Iterable, data, completeAccess=False):
         """Writes a Service Data Object (SDO) to a slave."""
         slave = self.pysoem_master.slaves[slaveInstance.node]
-
-        if isinstance(address, Enum):
-            address = address.value.value
-
         index, subIndex, packFormat, *_ = address
         slave.sdo_write(index, subIndex, struct.pack('<' + packFormat, data), ca=completeAccess)
 
@@ -76,8 +65,7 @@ class EthercatBus:
         for slave_ndx, slave in enumerate(self.pysoem_master.slaves):
             # Inspect the available attributes using dir()
             data[slave_ndx] = OrderedDict()
-            data[slave_ndx]['attributes'] = dir(slave)
-
+            data[slave_ndx]['attributes'] = [x for x in dir(slave) if not x.startswith('__')]
             for key, attrib, default in zip(keys, attribs, defaults):
                 try:
                     data[slave_ndx][key] = getattr(slave, attrib, default)  # Revision number
@@ -137,21 +125,6 @@ class EthercatBus:
         state = state.value if isinstance(state, Enum) else state
         self.pysoem_master.slaves[slaveInstance.node].state = state
         self.pysoem_master.slaves[slaveInstance.node].write_state()
-
-    ### Device state methods ###
-    def assertDeviceState(self, slaveInstance, state: Enum | int) -> bool:
-        state = state.value if isinstance(state, Enum) else state
-        statusword = self.SDORead(slaveInstance, slaveInstance.object_dict.STATUSWORD)
-        maskedWord = statusword & STATUSWORD_STATE_BITMASK
-        maskedWord = maskedWord & state
-        return maskedWord == state
-
-    def getDeviceState(self, slaveInstance):
-        """Returns the statusword of the slave."""
-        return self.SDORead(slaveInstance, slaveInstance.object_dict.STATUSWORD)
-
-    def setDeviceState(self, slaveInstance, state: Enum | int):
-        self.SDOWrite(slaveInstance, slaveInstance.object_dict.CONTROLWORD, state)
 
     ### PDO methods ###
     def sendProcessData(self):

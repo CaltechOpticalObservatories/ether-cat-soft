@@ -1,10 +1,23 @@
 from enum import Enum
 from logging import getLogger
+from dataclasses import dataclass, astuple
+
 
 STATUSWORD_STATE_BITMASK = 0b1101111
 
 class IncorrectState(Exception):
     pass
+
+
+class EPOS4ErrorBits(Enum):
+    MOTION = 7
+    RESERVED = 6  # Reserved, always 0
+    DEVICE_PROFILE_SPECIFIC = 5  # Device profile-specific
+    COMMUNICATION_ERROR = 4
+    TEMPERATURE_ERROR = 3
+    VOLTAGE_ERROR = 2
+    CURRENT_ERROR = 1
+    GENERIC_ERROR = 0  # Generic error
 
 class ControlWord(Enum):
     COMMAND_SHUTDOWN = 0x0006
@@ -101,19 +114,25 @@ EPOS4_STATE_MACHINE = {
     'FAULT':                      {'SWITCH_ON_DISABLED': StateCommands.FAULT_RESET}
     }
 
+@dataclass(frozen=True)
 class EPOS4Obj:
-     """Class used for type checking and storing information from the firmware spec guide object dictionary."""
-     
-     def __init__(self, index: int, subIndex: int, packFormat: str, length: int):
-          
-          self.value = (index, subIndex, packFormat, length)
+    """Class used for type checking and storing information from the firmware spec guide object dictionary."""
+    index: int
+    subindex: int
+    packformat: str
+    length: int
 
-#TODO This really shouldn't be an enum!
-class EPOS4ObjDict(Enum):
+    def __iter__(self):
+        return iter(astuple(self))
+
+
+@dataclass(frozen=True)
+class EPOS4Registers:
     """Object dictionary containing the same information as the Firmware Specification guide
     for the EPOS4 Micro. See section 6.2 for more details"""
 
     ERROR_REGISTER = EPOS4Obj(0x1001, 0x00, 'B', 8) # 6.2.2
+    ERROR_CODE = EPOS4Obj(0x603F, 0x00, 'H', 16) # 6.2.2
     SERIAL_NUMBER = EPOS4Obj(0x1018, 0x04, 'I', 32) # 6.2.11.4
     DIAGNOSIS_HISTORY_NEWEST_MESSAGE = EPOS4Obj(0x10F3, 0x02, 'B', 8) # 6.2.13.2
     DIAGNOSIS_HISTORY_NEW_MESSAGES_AVAILABLE = EPOS4Obj(0x10F3, 0x04, 'c', 1) # 6.2.13.4
@@ -243,18 +262,13 @@ def concatenateBits(nums: list[int], dataLengths: list[int] | int) -> int:
         result |= num # bitwise OR the current number with the result
     return result
 
-def makePDOMapping(objects: EPOS4Obj | list[EPOS4Obj], raiseErrorWhenOverLengthLimit = True) -> list[int]:
+def make_pdo_mapping(objects: EPOS4Obj | list[EPOS4Obj], raiseErrorWhenOverLengthLimit = True) -> list[int]:
     """Create a 32 bit unsigned integer that can be used to map an object to a PDO. Integer
     is created by concatenating bits from the index, subindex, and length of the data type."""
 
     # If only a single command is entered, put it in a 1 element list
-    if isinstance(objects, (Enum, tuple, EPOS4Obj)):
+    if isinstance(objects, EPOS4Obj):
         objects = [objects]
-
-    # Handle use case where tuples are the input by forcing tuples in all use cases
-    for i, objectToMap in enumerate(objects):
-        if isinstance(objectToMap, Enum):
-            objects[i] = objectToMap.value.value
 
     mappingIntegers = []
     totalLength = 0
