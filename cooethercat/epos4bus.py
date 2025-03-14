@@ -46,6 +46,7 @@ class EPOS4Bus:
 
         pass a dictionary of bus id types if passed no default will be used.
         """
+        self.disable_pdo()
         self._bus.initialize_slaves()
         self.slaves = []
         for i, instance in enumerate(self._bus.pysoem_master.slaves):
@@ -269,7 +270,7 @@ class EPOS4Bus:
             strings = []
             for slave in self.slaves:
                 # Print the actual position if asked
-                strings.append(f'{slave.position()}')
+                strings.append(f'{slave.position}')
                 moving |= slave.moving
 
             if verbose:
@@ -367,10 +368,10 @@ class EPOS4Bus:
             # Prepare the data for the slave
             data = slave.rx_data
             data[slave._controlwordPDOIndex] = ControlWord.COMMAND_ABSOLUTE_START_IMMEDIATELY.value
-            data[1] = position  # Target position
-            data[2] = acceleration  # Profile acceleration
-            data[3] = deceleration  # Profile deceleration
-            data[4] = speed  # Profile velocity
+            data[1] = int(position)  # Target position
+            data[2] = int(acceleration)  # Profile acceleration
+            data[3] = int(deceleration)  # Profile deceleration
+            data[4] = int(speed)  # Profile velocity
             slave._create_pdo_message(data)  # Create PDO message for this slave
 
         self.wait_for_pdo_transmit()
