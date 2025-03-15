@@ -32,7 +32,7 @@ class EPOS4Bus:
         self.PDOCycleTime = 0.002  # 10ms, official sync manager 2 cycle time is 2ms but I've run into issues
         self._pdo_shutdown = threading.Event()
         self._pdo_thread = None
-        self._pdo_lock = threading.Lock()
+        # self._pdo_lock = threading.Lock()
 
     def open(self):
         self._bus.open()
@@ -138,10 +138,11 @@ class EPOS4Bus:
             self._pdo_shutdown.clear()
             while not self._pdo_shutdown.is_set():
                 #start = time.perf_counter_ns()
-                self._send_pdo(sleep=False)
-                # time.sleep(max(self.PDOCycleTime - (time.perf_counter_ns() - start) * 1e-9, 0))
-                #start = time.perf_counter_ns()
-                self._receive_pdo(sleep=False)
+                with self._bus.lock:
+                    self._send_pdo(sleep=False)
+                    # time.sleep(max(self.PDOCycleTime - (time.perf_counter_ns() - start) * 1e-9, 0))
+                    #start = time.perf_counter_ns()
+                    self._receive_pdo(sleep=False)
                 # time.sleep(max(self.PDOCycleTime - (time.perf_counter_ns() - start) * 1e-9, 0))
                 time.sleep(self.PDOCycleTime)
 
@@ -176,7 +177,7 @@ class EPOS4Bus:
         return self._pdo_thread and self._pdo_thread.is_alive()
 
     def _send_pdo(self, sleep=True):
-        with self._pdo_lock:
+        with self._bus.lock:
             self._bus.sendProcessData()
             for s in self.slaves:
                 if s.pdo_message_pending.is_set():
@@ -186,7 +187,7 @@ class EPOS4Bus:
             time.sleep(self.PDOCycleTime)
 
     def _receive_pdo(self, sleep=True, timeout=2000):
-        with self._pdo_lock:
+        with self._bus.lock:
             self._bus.pysoem_master.receive_processdata(timeout=timeout)
             start = time.perf_counter_ns()
             for slave in self.slaves:
@@ -200,7 +201,7 @@ class EPOS4Bus:
             time.sleep(max(self.PDOCycleTime - (finish - start) * 1e-9,0))
 
     def _send_receive_pdo(self, sleep=True, timeout=2000):
-        with self._pdo_lock:
+        with self._bus.lock:
             self._send_pdo(sleep=sleep)
             self._receive_pdo(sleep=sleep, timeout=timeout)
 
@@ -324,6 +325,12 @@ class EPOS4Bus:
 
         self._block_until_target(verbose=verbose)
 
+    def stop_motors(self):
+        for slave in self.slaves:
+            data = slave.rx_data
+            data[slave._controlwordPDOIndex] = ControlWord.COMMAND_QUICK_STOP.value
+            slave._create_pdo_message(data)
+
     @pdo_mode_only
     def move_to(self, positions: int | dict[int], acceleration=10000, deceleration=10000, speed=4000, blocking=True,
                 verbose=False):
@@ -346,6 +353,7 @@ class EPOS4Bus:
             slave._create_pdo_message(data)
 
         self.wait_for_pdo_transmit()
+        time.sleep(0.1)
 
         for slave in self.slaves:
             data = slave.rx_data
@@ -354,6 +362,7 @@ class EPOS4Bus:
             slave._create_pdo_message(data)
 
         self.wait_for_pdo_transmit()
+        time.sleep(0.1)
 
         for id, position in positions.items():
             if not isinstance(id, int) and 0<id<len(self.slaves):
@@ -399,4 +408,4 @@ class EPOS4Bus:
             slave.check_errors()
 
     def __del__(self):
-        self.close()
+        self.disable_pdo()
